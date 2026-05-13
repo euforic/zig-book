@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zig Interactive Tutor"
+  short_description: "Interactive Zig tutoring from this book"
+  default_prompt: "Use $zig-interactive-tutor to help me learn Zig interactively from this book."

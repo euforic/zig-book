@@ -1,0 +1,87 @@
+<p>Zig has first-class SIMD via the type <code>@Vector(N, T)</code>: a fixed-length vector of <code>N</code> values of type <code>T</code> that uses SIMD registers and operations where the target supports them. Regular arithmetic operators (<code>+</code>, <code>*</code>, <code>&amp;</code>, etc.) work element-wise. No intrinsics, no ifdef forests — write the math, get the vector code.</p>
+
+<h2>Making a vector</h2>
+${z(`const std = @import("std");
+
+const Vec4 = @Vector(4, f32);
+
+pub fn main() void {
+    const a: Vec4 = .{ 1, 2, 3, 4 };
+    const b: Vec4 = .{ 10, 20, 30, 40 };
+    const sum = a + b;
+    std.debug.print("{any}\\n", .{sum}); // { 11, 22, 33, 44 }
+}`)}
+<p>Element initialization uses an array literal. The compiler picks the right SIMD instructions for the target — SSE/AVX on x86, NEON on ARM, etc.</p>
+
+<h2>Element access</h2>
+<p>Index a vector to read or write a single element:</p>
+${z(`var v: @Vector(4, i32) = .{ 1, 2, 3, 4 };
+v[0] = 99;
+const last = v[3]; // 4`)}
+<p>Vectors are not slices — there's no <code>.len</code>, no iteration with <code>for</code>. They are fixed-shape value types.</p>
+
+<h2>Reductions</h2>
+<p><code>@reduce</code> collapses a vector to a scalar with a given operation:</p>
+${z(`const v: @Vector(4, i32) = .{ 1, 2, 3, 4 };
+const total = @reduce(.Add, v);    // 10
+const product = @reduce(.Mul, v);  // 24
+const biggest = @reduce(.Max, v);  // 4`)}
+<p>Available reductions: <code>.Add</code>, <code>.Mul</code>, <code>.And</code>, <code>.Or</code>, <code>.Xor</code>, <code>.Min</code>, <code>.Max</code>.</p>
+
+<h2>Predicates and selection</h2>
+<p>Comparing two vectors produces a vector of booleans:</p>
+${z(`const a: @Vector(4, i32) = .{ 1, 5, 3, 7 };
+const b: @Vector(4, i32) = .{ 2, 4, 3, 8 };
+const mask: @Vector(4, bool) = a > b;     // { false, true, false, false }
+
+const c = @select(i32, mask, a, b);      // pick from a where mask is true, b otherwise
+// c = { 2, 5, 3, 8 }`)}
+<p><code>@select</code> is the standard "vector-aware if": no branches, all elements processed.</p>
+
+<h2>Shuffling</h2>
+<p><code>@shuffle</code> rearranges elements from one or two vectors according to an index mask:</p>
+${z(`const a: @Vector(4, u8) = .{ 'a', 'b', 'c', 'd' };
+const b: @Vector(4, u8) = .{ 'A', 'B', 'C', 'D' };
+
+// Take a[0], b[1], a[2], b[3]  -> { 'a', 'B', 'c', 'D' }
+const mixed = @shuffle(u8, a, b, @Vector(4, i32){ 0, ~@as(i32, 0), 2, ~@as(i32, 2) });`)}
+<p>Indices into <code>a</code> are non-negative; indices into <code>b</code> are bit-not'd. Awkward syntactically, very fast at runtime.</p>
+
+<h2>Splat: scalar to vector</h2>
+<p>Replicate a single value across all lanes:</p>
+${z(`const v: @Vector(8, f32) = @splat(3.14);
+// v == { 3.14, 3.14, ..., 3.14 }`)}
+<p>Common in expressions where you need to scale a vector by a constant.</p>
+
+<h2>Casting between vectors and arrays</h2>
+<p>A vector and an array of the same shape are layout-compatible (subject to alignment). Convert with regular casts or <code>@bitCast</code>:</p>
+${z(`const arr: [4]f32 = .{ 1, 2, 3, 4 };
+const v: @Vector(4, f32) = arr;     // implicit, in some contexts
+const back: [4]f32 = v;             // also works`)}
+<p>This makes it natural to load a slice into a vector, do work, and store the result back.</p>
+
+<h2>Picking N</h2>
+<p>The right <code>N</code> depends on the target. The standard library exposes <code>std.simd.suggestVectorLength(T)</code> to get a reasonable default for the current target:</p>
+${z(`const std = @import("std");
+
+const N = std.simd.suggestVectorLength(f32) orelse 4;
+const V = @Vector(N, f32);
+
+fn sum(xs: []const f32) f32 {
+    var acc: V = @splat(0);
+    var i: usize = 0;
+    while (i + N <= xs.len) : (i += N) {
+        acc += @as(V, xs[i..][0..N].*);
+    }
+    var total = @reduce(.Add, acc);
+    while (i < xs.len) : (i += 1) total += xs[i];
+    return total;
+}`)}
+<p>This is the canonical SIMD loop: vectorize the bulk, tail-handle the remainder.</p>
+
+<h2>Caveats</h2>
+<ul>
+  <li>Vector lengths must be comptime-known.</li>
+  <li>Alignment matters: loads from a misaligned pointer to a vector are slower (and can be UB on some targets). Use slices that you've aligned, or use <code>@alignCast</code> when you've checked manually.</li>
+  <li>The compiler may legalize unusual widths by splitting into smaller instructions. Profile if it matters.</li>
+</ul>

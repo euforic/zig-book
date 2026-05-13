@@ -1,0 +1,112 @@
+<p>A slice is a runtime-sized view into an array or memory region. You will use slices for almost everything: strings, buffers, function parameters, file contents, network reads. Understanding them well pays off immediately.</p>
+
+<h2>What a slice is</h2>
+<p>A slice has type <code>[]T</code> (or <code>[]const T</code> for an immutable view). Internally it's a pair: a pointer to the first element and a length. On a 64-bit machine, a slice is 16 bytes.</p>
+${z(`var arr = [_]i32{ 10, 20, 30, 40, 50 };
+const all: []i32 = &arr;       // pointer to whole array → []i32
+const view: []const i32 = &arr; // read-only view
+const middle = arr[1..4];      // slice from index 1 to 4 (exclusive) → { 20, 30, 40 }
+
+std.debug.print("{} {} {}\\n", .{ middle.len, middle[0], middle[2] });
+// 3 20 40`)}
+
+<h2>Slicing syntax</h2>
+${z(`const s = "hello world";
+
+const word1 = s[0..5];   // "hello"
+const word2 = s[6..];    // "world"
+const all = s[0..];      // whole thing
+const sub = s[1..s.len-1]; // "ello worl"
+
+// Slice from a slice — perfectly normal:
+const first_two = word2[0..2]; // "wo"`)}
+
+<p>The general form is <code>x[start..end]</code>. <code>end</code> is exclusive. Both bounds must be in <code>0..=x.len</code>. Out-of-bounds slicing panics in safe builds.</p>
+
+<h2>Slice operations</h2>
+${z(`const s: []const u8 = "Hello, Zig!";
+
+const n = s.len;            // 11
+const first = s[0];          // 'H'
+const ptr = s.ptr;           // [*]const u8 — many-item pointer to start
+
+// Two slices may refer to the same memory:
+const greet: []const u8 = s[0..5]; // "Hello"
+// greet.ptr == s.ptr is true.
+
+// Iterating:
+for (s) |byte| {
+    if (byte == ',') break;
+}
+
+for (s, 0..) |byte, i| {
+    std.debug.print("[{}] = {c}\\n", .{ i, byte });
+}`)}
+
+<h2>Mutability</h2>
+${z(`var data = [_]u8{ 1, 2, 3, 4 };
+const view: []u8 = &data;      // mutable view
+view[0] = 99;                  // ok; data[0] is now 99
+
+const ro: []const u8 = &data;  // const view
+// ro[0] = 5;                  // compile error
+
+// const on the slice itself:
+const fixed: []u8 = &data;
+// fixed = somethingElse;      // error: cannot reassign 'fixed'
+fixed[1] = 88;                 // ok: the bytes are still mutable`)}
+<p>Two different things to control:</p>
+<ul>
+  <li><code>const</code> on the binding → can't reassign the slice itself.</li>
+  <li><code>const</code> in the slice type (<code>[]const T</code>) → can't write through it.</li>
+</ul>
+
+<h2>Sentinel-terminated slices</h2>
+<p>The same sentinel concept from the previous chapter works on slices: <code>[:0]const u8</code> is a slice of bytes guaranteed to have a zero at index <code>len</code>. C strings are this type, conceptually.</p>
+${z(`const lit: [:0]const u8 = "hello";
+// lit.len == 5
+// lit[lit.len] == 0 (guaranteed; reachable, unlike normal slices)
+
+// Adding a sentinel to a normal slice with a runtime check:
+fn ensureZero(s: []const u8) ?[:0]const u8 {
+    if (s.len == 0 or s[s.len - 1] != 0) return null;
+    return s[0 .. s.len - 1 :0];
+}`)}
+<p>The <code>:0</code> in <code>s[a..b :0]</code> asserts that <code>s[b]</code> is the sentinel. If the assertion fails, your safe build panics.</p>
+
+<h2>The shapes of pointers</h2>
+<p>Zig distinguishes between several kinds of pointers, and slices borrow from this family. You'll meet them in detail in Part VI; here's the quick map:</p>
+<table>
+  <tr><th>Type</th><th>Meaning</th></tr>
+  <tr><td><code>*T</code></td><td>Pointer to exactly one <code>T</code></td></tr>
+  <tr><td><code>[*]T</code></td><td>Many-item pointer; unknown length</td></tr>
+  <tr><td><code>[]T</code></td><td>Slice: ptr + len</td></tr>
+  <tr><td><code>[*:0]T</code></td><td>Many-item pointer, zero-terminated</td></tr>
+  <tr><td><code>[:0]T</code></td><td>Slice with zero sentinel</td></tr>
+  <tr><td><code>?*T</code></td><td>Optional pointer (may be null)</td></tr>
+</table>
+
+<h2>Slices in function signatures</h2>
+${z(`// Read-only data — by far the most common parameter type:
+fn countSpaces(text: []const u8) usize {
+    var count: usize = 0;
+    for (text) |c| if (c == ' ') count += 1;
+    return count;
+}
+
+// Mutable buffer the function writes into:
+fn fill(buf: []u8, value: u8) void {
+    for (buf) |*b| b.* = value;  // dereference with .*
+}
+
+var scratch: [128]u8 = undefined;
+fill(&scratch, 0);
+const ones = countSpaces("a b c"); // 2`)}
+<p>The idiom for a function that "writes a result somewhere the caller provides" is to take a <code>[]u8</code> buffer and return a <code>[]u8</code> sub-slice of it covering exactly the bytes used. <code>std.fmt.bufPrint</code> is the canonical example.</p>
+
+<h2>Slice vs array, when to use which</h2>
+<ul>
+  <li><strong>Slice (<code>[]T</code>):</strong> the right type for parameters, return values, fields in structs, and anywhere the length isn't known until runtime.</li>
+  <li><strong>Array (<code>[N]T</code>):</strong> for fixed-size buffers on the stack, lookup tables, vectors of compile-time-known length.</li>
+</ul>
+<p>Convert between them with <code>&array</code> (array → slice) and <code>slice.ptr[0..N]</code> (slice → array of known length, if you've proved the length).</p>

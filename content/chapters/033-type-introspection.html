@@ -1,0 +1,98 @@
+<p>Comptime is the door; <code>@typeInfo</code> is the key. Given a type, it returns a tagged union describing that type's structure — fields, variants, parameters, return type, layout. With this, you can write code that adapts itself to whatever type you hand it.</p>
+
+<h2>The Type tag</h2>
+<p><code>@typeInfo</code> returns <code>std.builtin.Type</code>, a tagged union with a variant per kind of type:</p>
+${z(`const std = @import("std");
+const T = i32;
+
+comptime {
+    const info = @typeInfo(T);
+    switch (info) {
+        .int => |int_info| {
+            std.debug.assert(int_info.signedness == .signed);
+            std.debug.assert(int_info.bits == 32);
+        },
+        else => @compileError("expected an integer"),
+    }
+}`)}
+<p>The payload of each variant carries the relevant facts: an <code>.int</code> info has signedness and bit width, a <code>.@"struct"</code> info has fields, layout, decls, and a backing integer (for packed), a <code>.@"fn"</code> info has parameters and return type, and so on.</p>
+
+<h2>Iterating struct fields</h2>
+<p>The classic use of typeInfo is generating code per field:</p>
+${z(`fn debugPrint(value: anytype) void {
+    const T = @TypeOf(value);
+    const fields = @typeInfo(T).@"struct".fields;
+    std.debug.print("{s}{{\\n", .{@typeName(T)});
+    inline for (fields) |f| {
+        std.debug.print("  {s}: {any}\\n", .{ f.name, @field(value, f.name) });
+    }
+    std.debug.print("}}\\n", .{});
+}`)}
+<p>Each iteration of the <code>inline for</code> bakes in a different <code>f.name</code> as a string literal and a different <code>@field</code> access at compile time.</p>
+
+<h2>Common queries</h2>
+${z(`@typeName(T)             // string name, e.g. "main.MyStruct"
+@hasDecl(T, "init")      // does T have a public/private declaration named "init"?
+@hasField(T, "name")     // does T (a struct/union/enum) have a field named "name"?
+@bitSizeOf(T)            // size in bits, including padding
+@sizeOf(T)               // size in bytes
+@alignOf(T)              // alignment in bytes
+@offsetOf(T, "field")    // byte offset of a field within T
+@field(value, "name")    // dynamic field access by string`)}
+<p>All of these are comptime — the string arguments must be literals or comptime expressions. There is no runtime reflection.</p>
+
+<h2>Building things from typeInfo</h2>
+<p>You can generate a serializer that handles any struct:</p>
+${z(`fn writeJson(writer: anytype, value: anytype) !void {
+    const T = @TypeOf(value);
+    switch (@typeInfo(T)) {
+        .int, .float => try writer.print("{}", .{value}),
+        .bool => try writer.writeAll(if (value) "true" else "false"),
+        .pointer => |p| if (p.size == .slice and p.child == u8) {
+            try writer.print("\\"{s}\\"", .{value});
+        } else @compileError("can't serialize " ++ @typeName(T)),
+        .@"struct" => |s| {
+            try writer.writeByte('{');
+            inline for (s.fields, 0..) |f, i| {
+                if (i != 0) try writer.writeByte(',');
+                try writer.print("\\"{s}\\":", .{f.name});
+                try writeJson(writer, @field(value, f.name));
+            }
+            try writer.writeByte('}');
+        },
+        else => @compileError("unsupported type " ++ @typeName(T)),
+    }
+}`)}
+<p>This is the kind of code that, in other languages, requires macros or runtime reflection or external code generation. In Zig it's a function that happens to be partly comptime.</p>
+
+<h2>Creating types programmatically</h2>
+<p>Zig 0.16 split the old single-builtin <code>@Type</code> into individual type-constructing builtins. To build a struct from a list of fields at comptime:</p>
+${z(`// 0.16 idiom: individual type-creating builtins
+const T = @Struct(.{
+    .layout = .auto,
+    .fields = &.{
+        .{ .name = "x", .type = i32, .default_value = null, .is_comptime = false, .alignment = 0 },
+        .{ .name = "y", .type = i32, .default_value = null, .is_comptime = false, .alignment = 0 },
+    },
+    .decls = &.{},
+    .is_tuple = false,
+});`)}
+
+${note("Type construction builtins", "<p style=\"margin:0\">Use the individual type-creating builtins: <code>@Struct</code>, <code>@Enum</code>, <code>@Union</code>, <code>@ErrorSet</code>, <code>@Opaque</code>, and related forms. Each one takes the typed init payload it cares about, which gives clear compile errors when the generated type description is wrong.</p>")}
+
+<h2>Inspecting function types</h2>
+<p>You can introspect functions too:</p>
+${z(`fn arity(comptime F: type) usize {
+    return @typeInfo(F).@"fn".params.len;
+}
+
+fn returnType(comptime F: type) type {
+    return @typeInfo(F).@"fn".return_type.?;
+}
+
+const f: fn (a: i32, b: i32) bool = lessThan;
+comptime std.debug.assert(arity(@TypeOf(f)) == 2);
+comptime std.debug.assert(returnType(@TypeOf(f)) == bool);`)}
+
+<h2>The shape of stdlib code</h2>
+<p>Open any stdlib container and you'll see this pattern: type passed in, <code>@typeInfo</code> matched against, branches per shape. Once you're fluent at reading switch-on-typeInfo, large amounts of Zig become legible.</p>

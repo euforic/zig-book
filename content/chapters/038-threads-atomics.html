@@ -1,0 +1,66 @@
+<p>Zig's concurrency story is split between raw CPU concurrency and I/O-aware concurrency. Use <code>std.Thread</code> and atomics when you are directly managing threads or lock-free state. Use <code>std.Io</code> when operations may block, suspend, sleep, wait, or be canceled.</p>
+
+<p>You still have raw threads and atomics for the cases <code>Io</code> doesn't cover. Blocking synchronization primitives that may wait now live under <code>std.Io</code> so they can participate in cancellation and the selected scheduler.</p>
+
+<h2>std.Thread</h2>
+<p>For one-shot threads or hand-rolled concurrency, <code>std.Thread.spawn</code> is the primitive:</p>
+${z(`const std = @import("std");
+
+fn worker(id: usize) void {
+    std.debug.print("hi from {}\\n", .{id});
+}
+
+pub fn main() !void {
+    var threads: [4]std.Thread = undefined;
+    for (&threads, 0..) |*t, i| t.* = try std.Thread.spawn(.{}, worker, .{i});
+    for (threads) |t| t.join();
+}`)}
+<p><code>spawn</code> takes a function and a tuple of arguments. The function's signature determines the argument types; the compiler enforces matching. <code>join</code> waits for the thread to finish.</p>
+
+${note("Choose the level deliberately", "<p style=\"margin:0\">For pure CPU parallelism, raw threads keep ownership and scheduling explicit. For work that waits on files, sockets, timers, processes, or synchronization primitives, prefer <code>std.Io</code> so cancellation and scheduler policy stay visible.</p>")}
+
+<h2>Mutex and condition variables</h2>
+<p>The waiting primitives live in <code>std.Io</code>:</p>
+${z(`var mutex: std.Io.Mutex = .init;
+var queue: std.ArrayList(Job) = .empty;
+
+fn submit(io: std.Io, allocator: std.mem.Allocator, job: Job) !void {
+    try mutex.lock(io);
+    defer mutex.unlock(io);
+    try queue.append(allocator, job);
+}`)}
+<p><code>RwLock</code>, <code>Condition</code>, <code>Semaphore</code>, <code>Event</code>, and <code>Futex</code> follow the same rule: pass <code>io</code> to operations that may wait or wake waiters.</p>
+
+<h2>Atomics</h2>
+<p>For lock-free programming, the atomic builtins (covered last chapter) give you the C++11 memory model. The <code>std.atomic</code> namespace adds a friendly typed wrapper:</p>
+${z(`var counter: std.atomic.Value(u32) = .{ .raw = 0 };
+
+fn incr() void {
+    _ = counter.fetchAdd(1, .monotonic);
+}
+
+fn read() u32 {
+    return counter.load(.acquire);
+}`)}
+<p>The <code>.Value</code> type bundles the storage with its operations and avoids accidental non-atomic accesses.</p>
+
+<h2>Lazy init</h2>
+<p>Prefer passing initialized dependencies explicitly. If you truly need process-wide lazy initialization, build a small state machine with atomics and a mutex so ownership, failure behavior, and teardown are visible in your code.</p>
+
+<h2>Atomic memory orderings, the short version</h2>
+<p>If you're not sure which ordering to pick:</p>
+<ul>
+  <li><code>.seq_cst</code> — safest, slowest. Default if you don't know.</li>
+  <li><code>.acquire</code> on the load that publishes data; <code>.release</code> on the store. Standard ownership-transfer pattern.</li>
+  <li><code>.monotonic</code> for counters where the order doesn't matter, only the count.</li>
+  <li><code>.unordered</code> almost never — only for telemetry where lost updates are fine.</li>
+</ul>
+<p>Get this wrong and your program will run fine on x86 (which has strong defaults) and break on ARM. Test on both if it matters.</p>
+
+<h2>Send-receive channels</h2>
+<p>Zig does not ship a built-in MPSC/MPMC channel in <code>std</code>. Build one on top of a mutex and a condition variable if you need it, or use a community library. The <code>Io</code> primitives also expose a futures-and-cancellation model that covers many coordination use cases — see Part IX.</p>
+
+<h2>I/O-aware concurrency</h2>
+<p>The answer to "how do I do async work?" is "use <code>std.Io</code>." The <code>Io</code> interface lets a function express "this is a fallible operation that may suspend" without a separate language keyword; an implementation can run those operations cooperatively on one thread, across worker threads, or against a kernel event loop, transparently to the caller.</p>
+
+<p>If you're coming from an async-await background, the mental shift is: instead of awaiting individual operations, you write straight-line code against an <code>Io</code> handle, and the runtime decides where to suspend. Cancellation, batching, and structured concurrency are all first-class in the new interface.</p>

@@ -1,0 +1,121 @@
+<p>Numerics in Zig are stricter than in C and richer than in most modern languages. There are no implicit conversions between numeric types — even <code>u8</code> and <code>u16</code> require an explicit widening — and you can declare integers of arbitrary bit widths.</p>
+
+<h2>Signed and unsigned integers</h2>
+<p>The standard sizes:</p>
+<table>
+  <tr><th>Signed</th><th>Unsigned</th><th>Width</th></tr>
+  <tr><td><code>i8</code></td><td><code>u8</code></td><td>8 bits</td></tr>
+  <tr><td><code>i16</code></td><td><code>u16</code></td><td>16 bits</td></tr>
+  <tr><td><code>i32</code></td><td><code>u32</code></td><td>32 bits</td></tr>
+  <tr><td><code>i64</code></td><td><code>u64</code></td><td>64 bits</td></tr>
+  <tr><td><code>i128</code></td><td><code>u128</code></td><td>128 bits</td></tr>
+  <tr><td><code>isize</code></td><td><code>usize</code></td><td>pointer-width</td></tr>
+</table>
+
+<h3>Arbitrary-width integers</h3>
+<p>Any <code>iN</code> or <code>uN</code> for <code>N</code> from 0 to 65535 is a real type:</p>
+${z(`const flags: u3 = 0b101;
+const six_bit_color: u6 = 42;
+const huge: i1024 = (1 << 1000);  // 1024-bit signed integer
+const nothing: u0 = 0;            // takes zero bytes`)}
+<p>The compiler handles odd widths properly: a <code>u3</code> is stored in 8 bits in memory but the upper 5 are inaccessible without an explicit cast. Inside a <code>packed struct</code>, the sizes pack at the bit level. We'll see that in Chapter 33.</p>
+
+<h2>Integer literals</h2>
+<p>Literals come in several forms:</p>
+${z(`const dec: i32 = 42;
+const hex: i32 = 0x2A;
+const oct: i32 = 0o52;
+const bin: i32 = 0b00101010;
+const big: u64 = 1_000_000;     // underscores for readability`)}
+
+<h3>The comptime_int type</h3>
+<p>An untyped integer literal has type <code>comptime_int</code> — an arbitrary-precision integer that lives only at compile time. It coerces to any concrete integer type that can hold its value:</p>
+${z(`const a: u8 = 250;       // 250 fits in u8 → ok
+const b: u8 = 300;       // error: 300 out of range for u8
+const huge = 1 << 100;   // type is comptime_int; 0 runtime cost`)}
+
+<h2>Conversions</h2>
+<p>Zig refuses implicit narrowing or signedness changes. Use builtins:</p>
+${z(`const x: i32 = 100;
+const y: i64 = x;              // ok: safe widening
+const a: i32 = 100_000;
+const b: i16 = @intCast(a);    // explicit narrow; runtime checked in Debug
+const c: u32 = @intCast(-1);   // runtime panic: -1 doesn't fit in u32
+const d: u32 = @bitCast(-1);   // reinterpret bits: 0xFFFFFFFF
+const e: i32 = @truncate(0xFFFFFFFF_FFFFFFFF); // drop high bits`)}
+<p>Four operations, each with a different intent:</p>
+<ul>
+  <li><code>@intCast(x)</code> — change integer type, value must fit; checked at runtime in safe builds.</li>
+  <li><code>@bitCast(x)</code> — reinterpret the bits without changing the bit pattern. Source and dest must have the same size.</li>
+  <li><code>@truncate(x)</code> — chop off high bits to fit a narrower type. Never traps.</li>
+  <li><code>@as(T, x)</code> — explicit type assertion for ambiguous expressions; doesn't change values, but tells the compiler what type to pick.</li>
+</ul>
+
+<h2>Overflow</h2>
+<p>Zig is strict about overflow. The behavior depends on the operator:</p>
+<table>
+  <tr><th>Op</th><th>Wrapping</th><th>Saturating</th><th>Default</th></tr>
+  <tr><td>Add</td><td><code>+%</code></td><td><code>+|</code></td><td><code>+</code> (panics on overflow in Debug)</td></tr>
+  <tr><td>Sub</td><td><code>-%</code></td><td><code>-|</code></td><td><code>-</code></td></tr>
+  <tr><td>Mul</td><td><code>*%</code></td><td><code>*|</code></td><td><code>*</code></td></tr>
+  <tr><td>Shl</td><td><code>&lt;&lt;%</code></td><td><code>&lt;&lt;|</code></td><td><code>&lt;&lt;</code></td></tr>
+</table>
+${z(`const x: u8 = 250;
+const a = x + 10;      // panics in Debug/Safe: overflow
+const b = x +% 10;     // wraps: 4
+const c = x +| 10;     // saturates: 255
+
+const carry = @addWithOverflow(x, 10);
+// returns: struct{ u8, u1 } — sum and overflow bit`)}
+
+<p>For checked arithmetic without panics, the <code>@addWithOverflow</code>, <code>@subWithOverflow</code>, <code>@mulWithOverflow</code>, and <code>@shlWithOverflow</code> builtins return a struct of <code>{ result, overflow_bit }</code>.</p>
+
+${tip("Overflow is a logic bug", "<p style=\"margin:0\">The default operators panicking in safe builds is on purpose — silent overflow is a bug, not a feature. If wrapping is what you want, the <code>+%</code> family expresses that intent in the source.</p>")}
+
+<h2>Floats</h2>
+<p>Zig has <code>f16</code>, <code>f32</code>, <code>f64</code>, <code>f80</code>, and <code>f128</code>. The first three are the usual IEEE 754 sizes; <code>f80</code> is x86 extended precision; <code>f128</code> is IEEE quadruple precision (supported in software on most targets).</p>
+${z(`const a: f32 = 3.14;
+const b: f64 = 1.0e-10;
+const c: f128 = 1.0;
+const d: f16 = 0.5;`)}
+
+<h3>Float literals</h3>
+<p>An untyped float literal has type <code>comptime_float</code>, analogous to <code>comptime_int</code>.</p>
+${z(`const x = 1.5;          // comptime_float
+const y: f32 = x;        // ok
+const a: f64 = 1.0 / 3.0; // computed at comptime, then assigned`)}
+
+<h3>Float specials</h3>
+${z(`const std = @import("std");
+
+const inf = std.math.inf(f32);
+const nan = std.math.nan(f32);
+const eps = std.math.floatEps(f32);
+
+// Comparisons:
+const a: f32 = 0.1 + 0.2;
+const b: f32 = 0.3;
+const close = std.math.approxEqAbs(f32, a, b, 1e-6);`)}
+
+<h2>Int ↔ Float conversion</h2>
+${z(`const i: i32 = 42;
+const f: f64 = @floatFromInt(i);
+const back: i32 = @intFromFloat(f);  // truncates toward zero
+
+// @floor, @ceil, @round, and @trunc return floats.
+// To get an integer, use @intFromFloat after the rounding builtin:
+const r: i32 = @intFromFloat(@round(3.7));  // → 4`)}
+
+<h2>Bitwise and shift operators</h2>
+${z(`const x: u8 = 0b1100;
+const y: u8 = 0b1010;
+const both = x & y;     // 0b1000
+const either = x | y;   // 0b1110
+const xor = x ^ y;      // 0b0110
+const inv = ~x;         // 0b00110011
+const sh = x << 2;      // 0b110000 — overflow if it doesn't fit
+const shr = x >> 1;     // 0b0110`)}
+<p>The shift count's type must be a small unsigned integer — usually <code>u3</code> for a <code>u8</code>, <code>u6</code> for <code>u64</code>, etc. The compiler picks the right width.</p>
+
+<h2>A word on usize</h2>
+<p><code>usize</code> is the integer type the same width as a pointer on the target. It's what array indexing and <code>len</code> use. <code>isize</code> is its signed cousin. On 64-bit machines both are 64-bit; on 32-bit machines both are 32-bit. Whenever you index into memory or count bytes, reach for <code>usize</code>.</p>

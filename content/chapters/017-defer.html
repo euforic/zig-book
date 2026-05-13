@@ -1,0 +1,89 @@
+<p><code>defer</code> and <code>errdefer</code> are how Zig replaces destructors. They're simple, predictable, and impossible to forget. After this chapter you'll wonder how other languages do without them.</p>
+
+<h2>defer</h2>
+<p>A <code>defer</code> statement schedules an expression to run when the enclosing scope exits — by return, by break, by error propagation, by any means.</p>
+${z(`pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const file = try std.Io.Dir.cwd().openFile(io, "data.txt", .{});
+    defer file.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &.{});
+    const n = try reader.interface.readSliceShort(&buf);
+    std.debug.print("read {} bytes\\n", .{n});
+} // file.close() runs here, no matter how we get out`)}
+
+<p>Multiple <code>defer</code>s in the same scope run in <strong>LIFO order</strong> — the last one queued runs first. This makes paired setup/teardown trivial:</p>
+${z(`pub fn main() !void {
+    var allocator = std.heap.GeneralPurposeAllocator(.{}).init;
+    defer _ = allocator.deinit();
+
+    const buf = try allocator.allocator().alloc(u8, 1024);
+    defer allocator.allocator().free(buf);
+
+    // do work; buf is freed first, then the GPA deinits.
+}`)}
+
+<h2>What defer can do</h2>
+<p>A <code>defer</code> body can contain almost any expression: function calls, blocks, even <code>if</code>. It cannot <code>return</code> from the enclosing function (that would defeat the purpose), and it can't propagate errors with <code>try</code> — if you need to handle errors in cleanup, use a <code>catch</code> in the defer body.</p>
+${z(`defer file.close(io); // close is infallible in Zig 0.16`)}
+
+<h2>errdefer</h2>
+<p><code>errdefer</code> only runs if the scope exits via an <em>error</em>. On a normal return, the <code>errdefer</code> is skipped.</p>
+${z(`fn newConnection(addr: []const u8) !*Connection {
+    const c = try allocator.create(Connection);
+    errdefer allocator.destroy(c);  // only frees on the error paths below
+
+    try c.dial(addr);
+    errdefer c.disconnect();
+
+    try c.handshake();
+    return c;  // both errdefers cancelled; caller owns c
+}`)}
+
+<p>This is the pattern for constructors that allocate then do additional work that might fail. Each step adds another <code>errdefer</code>; on success they all evaporate.</p>
+
+${tip("Tracking partial state", "<p style=\"margin:0\">Whenever you write a <code>try</code> on a step <em>after</em> you've acquired a resource, the very next line should usually be <code>errdefer</code> for cleanup. This habit prevents leaks on rare error paths without you having to enumerate them.</p>")}
+
+<h2>errdefer can capture the error</h2>
+<p>You can write <code>errdefer |err|</code> to inspect which error caused the unwinding:</p>
+${z(`fn doStuff() !void {
+    errdefer |err| {
+        std.log.err("doStuff failed: {s}", .{@errorName(err)});
+    }
+    try step1();
+    try step2();
+}`)}
+
+<h2>Order matters</h2>
+<p>A <code>defer</code> sees the state at the moment of execution, not the moment of declaration. If you defer a function call that captures a pointer, the pointer must still be valid when the defer fires:</p>
+${z(`fn bug(buf: []u8) void {
+    defer process(buf); // captured by reference (slice is a fat pointer)
+    if (buf.len < 8) return;
+    // process(buf) runs at scope exit either way.
+}`)}
+
+<h2>defer is not the same as RAII</h2>
+<p>RAII ties cleanup to a type. <code>defer</code> ties cleanup to a syntactic location. The difference matters:</p>
+<ul>
+  <li>You can <code>defer</code> arbitrary statements, not just calls to a destructor.</li>
+  <li>You can defer the cleanup of a resource whose type doesn't know it owns anything (a file descriptor, a mutex, a temporary).</li>
+  <li>Conversely, you have to remember to write the <code>defer</code>. Forgetting it is the most common bug in Zig.</li>
+</ul>
+${danger("Common mistake", "<p style=\"margin:0\"><code>defer free(x);</code> right before reassigning <code>x</code> will free the <em>new</em> value, not the old one. Capture into a local if you need to defer a free for the value that's <em>currently</em> in scope.</p>")}
+
+<h2>A complete example</h2>
+${z(`pub fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+
+    const stat = try file.stat(io);
+    const buf = try allocator.alloc(u8, stat.size);
+    errdefer allocator.free(buf);
+
+    var reader = file.reader(io, &.{});
+    const n = try reader.interface.readSliceShort(buf);
+    if (n != stat.size) return error.ShortRead;
+    return buf;
+}`)}
+<p>Trace the cleanup: the file is always closed; the buffer is freed only if we exit with an error. On success the caller owns the buffer and is responsible for freeing it.</p>

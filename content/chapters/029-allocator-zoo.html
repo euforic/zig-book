@@ -1,0 +1,75 @@
+<p>The standard library ships about a dozen allocator implementations. You'll use four of them constantly and the rest occasionally. Here's the field guide.</p>
+
+<h2>GeneralPurposeAllocator (GPA)</h2>
+<p>The default for application code. Tracks every allocation, catches leaks and double-frees, validates pointers on free. Modestly slower than malloc but enormously safer.</p>
+${z(`var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+defer if (gpa.deinit() == .leak) @panic("memory leak");
+const allocator = gpa.allocator();`)}
+<p>The <code>deinit()</code> call returns <code>.leak</code> if any allocations were never freed; it prints stack traces of each leaked allocation to help you find them. In release builds, you can configure GPA to skip the safety checks for performance.</p>
+
+<h2>ArenaAllocator</h2>
+<p>An <em>arena</em> allocates by bumping a pointer and frees everything at once. Per-allocation free is a no-op. Perfect for phases of work that have a clear endpoint: per-request, per-frame, per-parse.</p>
+${z(`var arena = std.heap.ArenaAllocator.init(parent_allocator);
+defer arena.deinit();             // frees EVERYTHING at once
+const allocator = arena.allocator();
+
+const a = try allocator.alloc(u8, 100);
+const b = try allocator.alloc(u8, 200);
+// no free calls needed — arena.deinit() handles both
+_ = a; _ = b;`)}
+
+${note("ArenaAllocator is thread-safe", "<p style=\"margin:0\"><code>ArenaAllocator</code> uses a lock-free design that can be shared safely across threads. It is still best for batch lifetimes: allocate many related objects, then free them all at once with <code>arena.deinit()</code>.</p>")}
+
+<h2>FixedBufferAllocator</h2>
+<p>Allocates out of a fixed-size buffer you provide. When the buffer is full, allocations fail. Zero heap involvement. Excellent for embedded, hot paths, or testing OOM behavior.</p>
+${z(`var buf: [4096]u8 = undefined;
+var fba = std.heap.FixedBufferAllocator.init(&buf);
+const allocator = fba.allocator();
+
+const data = try allocator.alloc(u8, 100);
+_ = data;
+// fba.reset() to recycle the whole buffer`)}
+
+<h2>page_allocator</h2>
+<p>Allocates whole pages from the OS (mmap on Unix, VirtualAlloc on Windows). Very high per-allocation overhead (a page is typically 4 KiB minimum), but no bookkeeping. Useful as a backing allocator for arenas, or for huge buffers.</p>
+${z(`const allocator = std.heap.page_allocator;
+const huge = try allocator.alloc(u8, 1 << 24); // 16 MiB
+defer allocator.free(huge);`)}
+
+<h2>c_allocator</h2>
+<p>Forwards to libc <code>malloc</code>/<code>free</code>. Available when you link libc. Useful for FFI scenarios where C code holds onto memory and frees it itself.</p>
+${z(`// build.zig: exe.linkLibC();
+const allocator = std.heap.c_allocator;
+const buf = try allocator.alloc(u8, 1024);
+defer allocator.free(buf);`)}
+
+<h2>std.testing.allocator</h2>
+<p>The allocator your test blocks should use. It's a GPA tuned for tests: it fails the test if any allocation isn't freed by the end of the test.</p>
+${z(`test "no leak" {
+    const list = try std.testing.allocator.alloc(u32, 8);
+    defer std.testing.allocator.free(list);
+    list[0] = 42;
+    try std.testing.expectEqual(@as(u32, 42), list[0]);
+}`)}
+<p>Forget the <code>defer</code> and the test fails with a clear leak report. This single mechanism catches a huge fraction of memory bugs before they leave your laptop.</p>
+
+<h2>StackFallbackAllocator</h2>
+<p>Tries to allocate from a stack buffer first; falls back to a parent allocator if the buffer is exhausted. Great for "usually small, sometimes huge" patterns:</p>
+${z(`var sfa = std.heap.stackFallback(256, gpa.allocator());
+const allocator = sfa.get();
+const buf = try allocator.alloc(u8, requested_size);
+defer allocator.free(buf);`)}
+<p>Small requests stay on the stack — no heap traffic. Large requests escape to the heap automatically.</p>
+
+<h2>Picking an allocator: a rough flowchart</h2>
+<ul>
+  <li>Bounded size, short scope → stack buffer, no allocator.</li>
+  <li>One phase of work, free all at end → <code>ArenaAllocator</code> wrapping a GPA.</li>
+  <li>Long-lived data with mixed lifetimes → <code>GeneralPurposeAllocator</code>.</li>
+  <li>Hot path with predictable max size → <code>FixedBufferAllocator</code> or <code>StackFallbackAllocator</code>.</li>
+  <li>Inside a test → <code>std.testing.allocator</code>.</li>
+  <li>Talking to C → <code>c_allocator</code>.</li>
+</ul>
+
+<h2>Composition</h2>
+<p>Allocators compose. An arena on top of a GPA inherits the GPA's safety checks for the underlying pages while giving the arena's batch-free convenience for user code. A stack-fallback on top of an arena gives a per-frame allocator that mostly never touches the heap. Mix and match.</p>

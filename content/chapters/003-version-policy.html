@@ -1,0 +1,23 @@
+<p>Zig is pre-1.0, so the compiler and standard library change between releases. A book should teach one installable compiler clearly. This book targets <strong>Zig 0.16.0</strong>.</p>
+
+<h2>The target for this book</h2>
+<p>Install Zig 0.16.0 when following the examples. That keeps the language rules, standard library APIs, build-system behavior, and generated docs aligned with the prose.</p>
+
+${note("One version while learning", `<p style="margin:0">Do not mix examples across Zig releases while you are learning the language. First get comfortable with one stable version; then release notes become useful instead of distracting.</p>`)}
+
+<h2>How to check your compiler</h2>
+${sh(`$ zig version
+0.16.0
+
+$ zig env`)}
+
+<p><code>zig env</code> shows the compiler path, standard-library path, cache paths, and host target. The <code>std_dir</code> value is especially useful because it points to the exact standard library source your compiler uses.</p>
+
+<h2>Version rule for readers</h2>
+<ul>
+  <li>Use <code>0.16.0</code> for every command in this book.</li>
+  <li>When you start a project, put <code>.minimum_zig_version = "0.16.0"</code> in <code>build.zig.zon</code>.</li>
+  <li>When a future stable Zig release appears, update deliberately: install the compiler, read the release notes, then update examples and dependencies together.</li>
+</ul>
+
+<p>Practical takeaway: pin the compiler version for learning and for projects. Zig gives you enough control that version drift should be an explicit decision, not an accident.</p>

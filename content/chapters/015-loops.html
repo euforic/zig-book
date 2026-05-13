@@ -1,0 +1,96 @@
+<p>Zig has exactly two loops: <code>while</code> for conditions, <code>for</code> for iterables. They look like their cousins in other languages but have a few peculiarly Zig features — capturing on null, continue expressions, and the fact that both are expressions.</p>
+
+<h2>while</h2>
+${z(`var i: u32 = 0;
+while (i < 10) {
+    std.debug.print("{}\\n", .{i});
+    i += 1;
+}`)}
+
+<h3>continue expression</h3>
+<p>An optional "continue expression" runs after each iteration, before the condition is re-checked:</p>
+${z(`var i: u32 = 0;
+while (i < 10) : (i += 1) {
+    std.debug.print("{}\\n", .{i});
+}`)}
+<p>This is the closest thing Zig has to a classic C-style <code>for(init; cond; inc)</code>. The continue expression also runs when you say <code>continue</code> inside the loop.</p>
+
+<h3>while as expression</h3>
+<p>A <code>while</code> with a <code>break value</code> yields that value. The <code>else</code> branch runs if the loop exits without a <code>break</code>:</p>
+${z(`fn firstOver(items: []const i32, threshold: i32) ?i32 {
+    var i: usize = 0;
+    return while (i < items.len) : (i += 1) {
+        if (items[i] > threshold) break items[i];
+    } else null;
+}`)}
+
+<h3>while on optionals</h3>
+<p>The capturing form unwraps an optional each iteration; the loop ends when it sees <code>null</code>:</p>
+${z(`var iter = collection.iterator();
+while (iter.next()) |item| {
+    process(item);
+}`)}
+
+<h3>while on error unions</h3>
+${z(`while (queue.pop()) |item| {
+    process(item);
+} else |err| {
+    std.debug.print("queue error: {}\\n", .{err});
+}`)}
+
+<h2>for</h2>
+<p><code>for</code> iterates over arrays, slices, and integer ranges. There is no general iterator protocol like Rust's <code>Iterator</code> or Python's iterables; for custom iteration you write a <code>next</code> method and use <code>while</code> (as above).</p>
+
+${z(`const items = [_]i32{ 10, 20, 30 };
+
+for (items) |x| { _ = x; }                  // by value
+for (items, 0..) |x, i| { _ = x; _ = i; }   // with index
+for (&items) |*p| { _ = p; }                // by pointer
+
+// Multiple inputs in lockstep:
+const keys = [_][]const u8{ "a", "b" };
+const vals = [_]u32{ 1, 2 };
+for (keys, vals) |k, v| { _ = k; _ = v; }
+
+// Integer range — half open:
+for (0..10) |i| {
+    std.debug.print("{}\\n", .{i});
+}
+
+// Range with a non-zero start:
+for (5..15) |i| { _ = i; }
+
+// Iterate by pointer when you want to mutate:
+var buf = [_]u8{ 1, 2, 3 };
+for (&buf) |*b| b.* += 1;
+// buf is now { 2, 3, 4 }`)}
+
+<h3>for as expression, break with a value</h3>
+${z(`const matched: ?usize = for (haystack, 0..) |c, i| {
+    if (c == needle) break i;
+} else null;`)}
+
+<h3>continue and labeled loops</h3>
+<p>You can label a loop and break or continue out of a nested one:</p>
+${z(`outer: for (rows) |row| {
+    for (row) |cell| {
+        if (cell == 0) continue :outer;
+        process(cell);
+    }
+}`)}
+
+<h2>inline loops</h2>
+<p>Prefix <code>for</code> or <code>while</code> with <code>inline</code> to unroll the loop at compile time, which is useful when iterating over a tuple of mixed types:</p>
+${z(`const Pair = struct { name: []const u8, value: anytype };
+
+inline for (.{ "a", "b", "c" }, .{ 1, 2.5, true }) |name, val| {
+    std.debug.print("{s} = {}\\n", .{ name, val });
+}`)}
+<p><code>inline</code> only makes sense when the iteration count and the element types are compile-time known.</p>
+
+<h2>Loops are not statements</h2>
+<p>Loops without a <code>break value</code> still type as <code>void</code> (or <code>?T</code>/<code>!T</code> depending on the form). The general rule: if you can take a value out, the loop's type reflects that.</p>
+${z(`// loop that always returns from inside is noreturn:
+const n: u32 = while (true) {
+    if (try doThing()) |x| break x;
+};`)}

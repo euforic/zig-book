@@ -1,0 +1,109 @@
+<p>Zig has unit testing baked into the language. There's no framework, no external runner, no separate test directory convention. You write <code>test</code> blocks next to the code they exercise, and <code>zig build test</code> runs them.</p>
+
+<h2>The test block</h2>
+${z(`const std = @import("std");
+
+fn double(x: i32) i32 {
+    return x * 2;
+}
+
+test "double returns twice the input" {
+    try std.testing.expectEqual(@as(i32, 4), double(2));
+    try std.testing.expectEqual(@as(i32, -10), double(-5));
+}
+
+test "double of zero is zero" {
+    try std.testing.expectEqual(@as(i32, 0), double(0));
+}`)}
+
+<p>Tests are top-level declarations. They have an optional string label, a body that returns <code>!void</code> (it can fail). Inside, you call assertion helpers from <code>std.testing</code>. Any error returned from a test is a test failure.</p>
+
+<h2>The std.testing assertions</h2>
+<ul>
+  <li><code>expect(condition: bool)</code> — fail if false. Use for ad-hoc checks.</li>
+  <li><code>expectEqual(expected, actual)</code> — fail if not equal. Works for primitives, structs, enums, tagged unions.</li>
+  <li><code>expectEqualStrings(expected, actual)</code> — byte-equality on slices, with a useful diff message on failure.</li>
+  <li><code>expectEqualSlices(T, expected, actual)</code> — slice comparison for any element type.</li>
+  <li><code>expectEqualDeep(expected, actual)</code> — recursive structural equality, follows pointers and slices.</li>
+  <li><code>expectError(expected_err, result)</code> — fail unless the expression returned exactly this error.</li>
+  <li><code>expectApproxEqAbs / expectApproxEqRel</code> — for floats with tolerance.</li>
+</ul>
+
+${tip('When <code>expectEqual</code> fails, the error message includes the expected and actual values. <code>expectEqualStrings</code> goes further and shows the differing byte offset. Choose the most specific helper available — better failure messages save debugging time.')}
+
+<h2>Testing functions that allocate</h2>
+${z(`fn dup(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
+    const out = try allocator.alloc(u8, s.len);
+    @memcpy(out, s);
+    return out;
+}
+
+test "dup copies bytes" {
+    const allocator = std.testing.allocator;
+    const copy = try dup(allocator, "hello");
+    defer allocator.free(copy);
+    try std.testing.expectEqualStrings("hello", copy);
+}`)}
+
+<p><code>std.testing.allocator</code> is a special allocator that tracks every allocation. If your test exits with leaked memory, the runner reports the leak and fails the test. This is invaluable: leak-free APIs are validated automatically.</p>
+
+<h2>Expected errors</h2>
+${z(`fn parsePositive(s: []const u8) !u32 {
+    const n = try std.fmt.parseInt(i64, s, 10);
+    if (n < 0) return error.Negative;
+    return @intCast(n);
+}
+
+test "rejects negative numbers" {
+    try std.testing.expectError(error.Negative, parsePositive("-3"));
+}
+
+test "rejects garbage" {
+    try std.testing.expectError(error.InvalidCharacter, parsePositive("nope"));
+}`)}
+
+<h2>Running tests</h2>
+${sh(`# Run all tests reachable from src/main.zig
+zig test src/main.zig
+
+# Run tests through the build system (uses your build.zig settings)
+zig build test
+
+# Run tests matching a filter
+zig build test -Dtest-filter="parser"
+
+# Pass an allocator failure rate to stress-test error paths
+zig build test -Dtest-failing-allocator-rate=10`)}
+
+<p>The compiler discovers tests by traversing imports from the test root. If module <code>A</code> imports <code>B</code>, and <code>B</code> imports <code>C</code>, then tests in all three run. This is why the conventional setup is to put a single comprehensive test root in <code>src/root.zig</code> that imports the modules you want exercised.</p>
+
+<h2>Wiring tests in build.zig</h2>
+${z(`const tests = b.addTest(.{
+    .root_module = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    }),
+});
+
+const run_tests = b.addRunArtifact(tests);
+run_tests.timeout_ms = 60_000;  // 0.16 per-test timeout
+
+const test_step = b.step("test", "Run unit tests");
+test_step.dependOn(&run_tests.step);`)}
+
+<h2>Property-based testing via comptime</h2>
+<p>Zig doesn't ship a property-based testing library, but the language makes one easy to roll yourself. Use <code>std.Random</code> seeded deterministically, generate inputs in a loop, assert invariants.</p>
+
+${z(`test "addition is commutative" {
+    var prng = std.Random.DefaultPrng.init(12345);
+    const r = prng.random();
+    var i: usize = 0;
+    while (i < 1000) : (i += 1) {
+        const a = r.int(i64);
+        const b = r.int(i64);
+        try std.testing.expectEqual(a +% b, b +% a);
+    }
+}`)}
+
+${warn('Always seed deterministically in tests. If a property test fails, you need to be able to reproduce the failure exactly. A random seed plus a logging line on failure (\"failed with seed=N\") is the minimal CI-friendly pattern.')}

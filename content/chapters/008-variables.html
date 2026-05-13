@@ -1,0 +1,83 @@
+<p>Every binding in Zig is declared with either <code>const</code> or <code>var</code>. There is no implicit declaration, no shadowing without a new keyword, no untyped temporaries with surprising rules. Two keywords, both opinionated.</p>
+
+<h2>const</h2>
+<p><code>const</code> introduces an immutable binding. Once initialized, the value (or, for pointers, the pointer) cannot change.</p>
+${z(`const greeting = "Hello";
+const max_users: u32 = 1024;
+const pi: f64 = 3.141592653589793;
+
+greeting = "Howdy"; // error: cannot assign to constant`)}
+<p>You can omit the type when Zig can infer it. You're encouraged to write it when it adds clarity, especially for numeric literals where the inferred type might surprise you (more on that in the next chapter).</p>
+
+<h2>var</h2>
+<p><code>var</code> introduces a mutable binding. The value can be reassigned. The type must be known at compile time, but you can defer initialization within a block.</p>
+${z(`var counter: i32 = 0;
+counter += 1;
+counter = 42;
+
+var name: []const u8 = undefined;
+name = "Andrew";`)}
+
+<h3>undefined</h3>
+<p><code>undefined</code> is a value of any type that means "uninitialized." In <code>Debug</code> and <code>ReleaseSafe</code> builds, reading <code>undefined</code> memory tries to detect the mistake — most types are filled with <code>0xAA</code> bytes so the values look obviously broken in a debugger. In <code>ReleaseFast</code>, the memory is whatever was there. Never depend on the value.</p>
+
+${danger("Trap", "<p style=\"margin:0\">Don't conflate <code>undefined</code> with <code>null</code>. <code>null</code> is a real value (of optional types); <code>undefined</code> is a hole in your program that you've promised to fill before reading. Reading an <code>undefined</code> integer is undefined behavior, not a defined sentinel.</p>")}
+
+<h2>Mutability is shallow</h2>
+<p>This catches people coming from Rust. A <code>const</code> binding to a struct that contains a slice does not freeze the slice's elements:</p>
+${z(`const std = @import("std");
+
+pub fn main() void {
+    var buf = [_]u8{ 1, 2, 3 };
+    const slice = buf[0..];  // const slice ...
+    slice[0] = 99;            // ... but the bytes it points at are mutable
+    std.debug.print("{any}\\n", .{buf}); // { 99, 2, 3 }
+}`)}
+<p>The <code>const</code> means "the slice value (pointer + length) cannot be reassigned." The pointed-to memory's mutability is part of the pointer's <em>type</em>: <code>[]u8</code> vs <code>[]const u8</code>. We'll come back to this when we cover pointers.</p>
+
+<h2>Constants must be compile-time computable… unless they aren't</h2>
+<p>You can initialize a <code>const</code> with a runtime value:</p>
+${z(`fn now() i64 { return std.time.timestamp(); }
+
+pub fn main() void {
+    const start = now();   // ok: const just means "no reassignment"
+    std.debug.print("{}\\n", .{start});
+}`)}
+<p>The literal "constant" meaning of <code>const</code> in Zig is "single-assignment binding," not "compile-time known." There is a separate concept for the latter — <code>comptime</code> — covered in Part VII.</p>
+
+<h2>Container-level declarations</h2>
+<p>A top-level declaration (one outside any function) is implicitly resolved at compile time. Such declarations can be <code>const</code> or <code>var</code>:</p>
+${z(`const std = @import("std");
+
+const MAX_LEN: usize = 1024;
+var global_count: u32 = 0;       // file-level mutable; threadlocal? no, plain global
+
+fn bump() void { global_count += 1; }`)}
+
+${warn("Globals are globals", "<p style=\"margin:0\">A top-level <code>var</code> is a real mutable global. Multi-threaded code sharing it without synchronization is a data race. Use <code>threadlocal var</code> for per-thread state, or move state into a struct you pass around. Most Zig code avoids globals.</p>")}
+
+<h2>Visibility: pub vs private</h2>
+<p>By default, declarations are private to the file. Prefix with <code>pub</code> to expose them to other modules.</p>
+${z(`// math.zig
+pub const PI = 3.14159265358979;
+const SECRET_SALT = 0xDEADBEEF; // not exported
+
+pub fn area(r: f64) f64 {
+    return PI * r * r;
+}`)}
+<p>This is purely a visibility marker; it doesn't change linkage or codegen. A non-<code>pub</code> function can still be called from a <code>pub</code> function in the same file.</p>
+
+<h2>Shadowing is not allowed</h2>
+<p>Zig refuses to let you redeclare the same name in a nested scope:</p>
+${z(`fn confusing(x: i32) i32 {
+    var x: i32 = 5; // error: redefinition of 'x'
+    return x;
+}`)}
+<p>This is intentional. The compiler would rather make you choose a different name than allow the kind of bug where you think you're modifying the outer <code>x</code> but you've quietly created an inner one.</p>
+
+<h2>Type inference and explicit types</h2>
+<p>For locals, the right-hand side type is usually obvious. For function parameters and struct fields, types are required. For numeric literals, types are determined by the context they flow into; we'll spend the next chapter making that precise.</p>
+
+<p>One last detail before we leave: unused variables are errors, not warnings. Discard with <code>_</code>:</p>
+${z(`const result = computeExpensiveThing();
+_ = result; // ok, intentionally unused`)}

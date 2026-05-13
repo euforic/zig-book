@@ -1,0 +1,94 @@
+<p>Zig does not have a string type. It has byte slices that conventionally hold UTF-8. This is unfashionable but powerful: there's no string class to learn, no encoding to be silently wrong about, and no implicit conversions to fight.</p>
+
+<h2>String literals</h2>
+${z(`const a = "Hello";           // type: *const [5:0]u8
+const b: []const u8 = "Hello"; // common usage: a const byte slice
+const c = "Hello\\nWorld";    // \\n is a newline
+const d = "tab\\there";       // \\t for tab
+const e = "quote: \\"x\\"";    // escaped quote
+const f = "unicode: \\u{1F600}"; // 4-byte UTF-8 encoding of 😀`)}
+
+<p>A string literal in Zig has a precise type: a pointer to an array of bytes with a sentinel of zero. <code>*const [5:0]u8</code> means "pointer to const array of 5 <code>u8</code> followed by a zero." The trailing zero is there for compatibility with C, but Zig itself relies on the length, not the zero.</p>
+
+<p>Most of the time you don't write this type — you write <code>[]const u8</code> (slice of const bytes), and the literal coerces:</p>
+${z(`fn greet(name: []const u8) void {
+    std.debug.print("Hello, {s}!\\n", .{name});
+}
+
+greet("world"); // literal coerces to []const u8`)}
+
+<h2>Multiline strings</h2>
+<p>Multiline literals start each line with <code>\\\\</code>. No escapes are processed inside; what you see is what you get.</p>
+${z(`const sql =
+    \\\\SELECT id, name
+    \\\\FROM users
+    \\\\WHERE active = true
+;
+
+const json =
+    \\\\{
+    \\\\  "x": 1,
+    \\\\  "y": "hello"
+    \\\\}
+;`)}
+
+<h2>Character literals</h2>
+<p>A character literal is a single Unicode scalar value in single quotes. Its type is <code>comptime_int</code>; it coerces to any integer that fits.</p>
+${z(`const a: u8 = 'A';           // 65
+const newline: u8 = '\\n';      // 10
+const heart: u21 = '❤';         // 0x2764 — too big for u8
+const max: u8 = '~';            // 126
+
+// You can use them in arithmetic:
+const digit_value: u8 = '7' - '0'; // 7`)}
+
+<h2>The byte view: []u8 vs []const u8</h2>
+<p>A mutable string is <code>[]u8</code>; an immutable view is <code>[]const u8</code>. String literals are always const. To get a mutable buffer you allocate one:</p>
+${z(`var buf: [16]u8 = undefined;
+const name = try std.fmt.bufPrint(&buf, "user{d}", .{42});
+// name is now a []u8 slice of buf, e.g. "user42"`)}
+
+<h2>String operations</h2>
+<p>There is no <code>.length</code> method on a string because there's no string type — but a slice has <code>len</code>:</p>
+${z(`const s: []const u8 = "Hello";
+const n = s.len;          // 5
+const first = s[0];        // 'H' (a u8)
+const tail = s[1..];       // "ello" — also []const u8
+const middle = s[1..4];    // "ell"`)}
+
+<p>For everything else, the standard library:</p>
+${z(`const std = @import("std");
+const mem = std.mem;
+
+const i = mem.find(u8, "hello world", "world");      // ?usize: 6
+const eq = mem.eql(u8, "abc", "abc");                // true
+const starts = mem.startsWith(u8, "hello", "he");    // true
+const ends = mem.endsWith(u8, "hello", "lo");        // true
+
+const cut = mem.cut(u8, "key=value", "=");
+// cut is ?struct { prefix: []const u8, suffix: []const u8 }
+// for "key=value" with "=" → .{ "key", "value" }`)}
+
+${note("Search and split", "<p style=\"margin:0\"><code>find</code> returns an optional index. <code>cut</code> and <code>cutScalar</code> split on the first match and return both sides when the delimiter is present.</p>")}
+
+<h2>UTF-8</h2>
+<p>Zig assumes UTF-8 by convention. The standard library has helpers in <code>std.unicode</code> for the cases where you need to think about codepoints:</p>
+${z(`const std = @import("std");
+const unicode = std.unicode;
+
+const text: []const u8 = "héllo";
+const codepoint_count = try unicode.utf8CountCodepoints(text); // 5
+const byte_count = text.len;                                    // 6
+
+var iter = (try unicode.Utf8View.init(text)).iterator();
+while (iter.nextCodepoint()) |cp| {
+    std.debug.print("U+{X:0>4}\\n", .{cp});
+}`)}
+<p>Slicing into a UTF-8 byte string mid-codepoint produces invalid UTF-8 silently. If you need codepoint-aware iteration, use <code>std.unicode.Utf8Iterator</code>.</p>
+
+<h2>Comparing strings</h2>
+<p><code>==</code> on slices compares pointers and lengths, not contents. To compare contents use <code>std.mem.eql</code>:</p>
+${z(`const a: []const u8 = "hello";
+const b: []const u8 = "hello";
+const same_data = std.mem.eql(u8, a, b);  // true
+const same_slice = (a.ptr == b.ptr);       // may be true (literal pooling) but unreliable`)}

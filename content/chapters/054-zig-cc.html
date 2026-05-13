@@ -1,0 +1,64 @@
+<p>When you install Zig, you also get a C compiler. <code>zig cc</code> is a clang-compatible front-end that uses Zig's bundled libc headers and cross-compilation infrastructure. <code>zig c++</code> is the C++ counterpart. They accept all the clang flags you already know — <code>-O2</code>, <code>-Wall</code>, <code>-I</code>, <code>-D</code>, <code>-c</code>, <code>-o</code> — and add Zig's superpower: targeting any platform without installing a cross-toolchain.</p>
+
+<h2>Why this exists</h2>
+<p>The Zig compiler already needs LLVM to compile Zig. LLVM already includes clang. The bundled libc headers already exist to support Zig's interop story. Wiring up a clang front-end on top is mostly free. The result is a compiler that:</p>
+<ul>
+  <li>Cross-compiles C and C++ to any supported target out of the box.</li>
+  <li>Produces deterministic output — same input, same hash.</li>
+  <li>Acts as a drop-in for <code>cc</code> in most build systems.</li>
+  <li>Ships as a single tarball with no environment setup.</li>
+</ul>
+
+<h2>Using zig cc</h2>
+${sh(`# Compile a C program for the host
+zig cc hello.c -o hello
+
+# Cross-compile to Linux ARM64
+zig cc hello.c -target aarch64-linux-musl -o hello-arm
+
+# Cross-compile to Windows
+zig cc hello.c -target x86_64-windows-gnu -o hello.exe
+
+# Statically link against musl libc
+zig cc hello.c -target x86_64-linux-musl -o hello-static`)}
+
+<p>Notice that <code>-target</code> is the only flag that changes between hosts and architectures. Compare this with installing GCC cross-toolchains for each platform.</p>
+
+<h2>Using zig cc as your CC</h2>
+<p>Most build systems honor a <code>CC</code> environment variable. Setting <code>CC="zig cc"</code> usually works for Make, Autotools, CMake, and Meson:</p>
+
+${sh(`export CC="zig cc"
+export CXX="zig c++"
+export CC_FOR_TARGET="zig cc -target aarch64-linux-musl"
+
+./configure --host=aarch64-linux-musl
+make`)}
+
+<p>Some build systems use idiosyncratic clang flags or check compiler identity by parsing version strings. The <a href="https://github.com/ziglang/zig/wiki/zig-cc-cross-compilation-quick-reference">Zig wiki</a> tracks known projects and workarounds.</p>
+
+<h2>Reproducible builds</h2>
+<p>System compilers vary: different distros, different glibc versions, different patch sets. <code>zig cc</code> is bit-identical on every host (modulo the Zig version). Combined with content-addressed dependencies, this makes Zig-driven builds reproducible in the strict sense: build the same source on three different machines, get three identical artifacts.</p>
+
+${tip('Use <code>zig cc -###</code> to see the exact arguments Zig is passing to clang. This is the fastest way to debug a build system that\\u2019s misbehaving with a custom CC.')}
+
+<h2>Mixing zig cc with Zig code</h2>
+<p>Inside <code>build.zig</code>, you don't need to invoke <code>zig cc</code> manually — <code>addCSourceFile</code> already routes through the same machinery. Use <code>zig cc</code> when you're driving builds from outside Zig: shell scripts, Makefiles, integration with non-Zig ecosystems.</p>
+
+<h2>zig c++ for C++</h2>
+<p><code>zig c++</code> works the same way and ships with libc++ for the targets that need it. Templated C++ code, exceptions, RTTI, and the standard library all work. It's not a complete replacement for every C++ toolchain — projects that depend on Microsoft's MSVC ABI quirks or specific GCC ABI behavior may need patches — but for a large class of C++ code, it just works.</p>
+
+${sh(`zig c++ main.cpp -std=c++20 -O2 -o app
+zig c++ main.cpp -target aarch64-linux-musl -static -o app-arm`)}
+
+<h2>Caveats</h2>
+${warn('<code>zig cc</code> does not bundle every C library — only libc. If your code needs OpenSSL, zlib, libcurl, or another third-party library, you must build or vendor it yourself. The advantage is that you can cross-compile those libraries with <code>zig cc</code> too.')}
+
+${note('macOS targets that need framework headers (Foundation, AppKit) require an Apple SDK because Apple does not distribute those headers under a free license. For pure ANSI C and POSIX, no SDK is needed.')}
+
+<h2>Real-world use cases</h2>
+<ul>
+  <li><strong>Docker images.</strong> A single Zig install in your CI image cross-compiles for x86 and ARM Linux without QEMU.</li>
+  <li><strong>Embedded firmware.</strong> Target Cortex-M with <code>-target thumb-freestanding</code> and a custom linker script.</li>
+  <li><strong>Native modules for scripting languages.</strong> Compile a Python extension for Linux, macOS, and Windows from a Linux build host.</li>
+  <li><strong>Reproducible release tarballs.</strong> Produce identical binaries on every developer machine.</li>
+</ul>

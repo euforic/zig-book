@@ -1,0 +1,132 @@
+<p>Most language build systems are configuration files: <code>Makefile</code>, <code>CMakeLists.txt</code>, <code>Cargo.toml</code>, <code>package.json</code>. They have their own grammar, their own conditional syntax, their own template languages. Zig made a different choice. A Zig project's build description is a Zig program named <code>build.zig</code> that exports a <code>build</code> function. The <code>zig build</code> command compiles that program and runs it.</p>
+
+<p>The consequence is that everything you've learned applies. Conditionals are <code>if</code>. Loops are <code>for</code>. Functions are functions. Cross-platform logic is regular comptime branching. There is no DSL to learn — there's just an API.</p>
+
+<h2>The minimal build.zig</h2>
+${z(`const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const exe = b.addExecutable(.{
+        .name = "hello",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    b.installArtifact(exe);
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| run_cmd.addArgs(args);
+
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
+}`)}
+
+<p>Read this top to bottom. <code>standardTargetOptions</code> wires up <code>-Dtarget=...</code> so users can cross-compile. <code>standardOptimizeOption</code> wires up <code>-Doptimize=Debug|ReleaseSafe|ReleaseFast|ReleaseSmall</code>. <code>addExecutable</code> declares an output. <code>installArtifact</code> says "when the user runs <code>zig build install</code> (the default step), copy this artifact to <code>zig-out/bin/</code>." <code>step</code> declares a named user-facing command.</p>
+
+<h2>The graph metaphor</h2>
+<p>What you're really doing is building a directed acyclic graph of <em>steps</em>. Each step has dependencies. When you run <code>zig build run</code>, the system topologically sorts and executes only what's needed. Steps are nodes; <code>dependOn</code> adds edges. The build system parallelizes execution where the graph allows.</p>
+
+${callout('note', `<strong>0.16 module restructure.</strong> Builds now use the <code>root_module</code> pattern shown above instead of passing <code>root_source_file</code>, <code>target</code>, and <code>optimize</code> directly to <code>addExecutable</code>. The module owns those properties; the artifact owns the module.`)}
+
+<h2>Module objects</h2>
+<p>A <strong>module</strong> is a unit of Zig source code with its own root file, target, optimization mode, and dependencies. Executables, static libraries, dynamic libraries, and tests all wrap modules. Modules can depend on other modules — that's how you compose code across files and packages.</p>
+
+${z(`const utils = b.createModule(.{
+    .root_source_file = b.path("src/utils.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+
+const root = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+root.addImport("utils", utils);
+
+const exe = b.addExecutable(.{ .name = "app", .root_module = root });`)}
+
+<p>Inside <code>main.zig</code>, you now write <code>const utils = @import("utils");</code>. Imports are named, not path-based.</p>
+
+<h2>User-defined options</h2>
+${z(`const enable_telemetry = b.option(bool, "telemetry", "enable telemetry") orelse false;
+const max_threads = b.option(u32, "threads", "max worker threads") orelse 4;
+
+const options = b.addOptions();
+options.addOption(bool, "enable_telemetry", enable_telemetry);
+options.addOption(u32, "max_threads", max_threads);
+
+root.addOptions("build_options", options);`)}
+
+<p>In code: <code>const opts = @import("build_options"); if (opts.enable_telemetry) ...</code>. Options become a generated module whose contents are compile-time constants. This is how feature flags work without a preprocessor.</p>
+
+<h2>Libraries and linkage</h2>
+<p>Executables are only one artifact kind. The same module can back a static library, dynamic library, object file, or test artifact.</p>
+${z(`const lib_mod = b.createModule(.{
+    .root_source_file = b.path("src/root.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+
+const static_lib = b.addLibrary(.{
+    .linkage = .static,
+    .name = "mylib",
+    .root_module = lib_mod,
+});
+b.installArtifact(static_lib);
+
+const shared_lib = b.addLibrary(.{
+    .linkage = .dynamic,
+    .name = "mylib",
+    .root_module = lib_mod,
+});`)}
+
+<p>Use static libraries for simple distribution and embedding. Use dynamic libraries when another runtime needs to load your code at runtime or when platform packaging expects shared objects.</p>
+
+<h2>C sources and system libraries</h2>
+<p>A Zig module can compile C files and link against system libraries. Keep this inside <code>build.zig</code> so cross-compilation settings flow through one graph.</p>
+${z(`root.addCSourceFile(.{
+    .file = b.path("src/native.c"),
+    .flags = &.{ "-std=c99", "-Wall" },
+});
+
+root.linkSystemLibrary("c", .{});
+root.link_libc = true;`)}
+
+${warn("System libraries are target assumptions", `<p style="margin:0">A library available on your laptop may not exist for every cross target. Prefer vendored source or explicit target checks when shipping portable binaries.</p>`)}
+
+<h2>Standard steps</h2>
+<p>By convention, projects expose a few named steps that users come to expect:</p>
+<ul>
+  <li><code>zig build</code> — the default; usually equivalent to <code>install</code>.</li>
+  <li><code>zig build run</code> — build and run the main executable.</li>
+  <li><code>zig build test</code> — run unit tests.</li>
+  <li><code>zig build check</code> — type-check without producing artifacts (fast for editor integration).</li>
+  <li><code>zig build docs</code> — generate documentation HTML.</li>
+</ul>
+<p>None of these are magic. They're just <code>b.step(...)</code> declarations in your <code>build.zig</code>. Run <code>zig build --help</code> to see what a given project supports.</p>
+
+<h2>Useful 0.16 flags</h2>
+<p>Several flags meaningfully improve daily use:</p>
+<ul>
+  <li><code>--error-style=...</code> — choose how errors are printed (compact, verbose).</li>
+  <li><code>--multiline-errors</code> — let error messages span multiple lines for readability.</li>
+  <li><code>--time-report</code> — show a breakdown of where build time was spent.</li>
+  <li><code>--prominent-compile-errors</code> — surface compile errors above test failures.</li>
+</ul>
+${tip('Run <code>zig build --help</code> in any Zig project for a list of options, steps, and target settings the author exposed. The <code>--help</code> output is generated from your <code>build.zig</code>, so it stays in sync.')}
+
+<h2>Try it: inspect a build graph</h2>
+<p>In a fresh project, add one Boolean build option, one <code>test</code> step, and one <code>check</code> step. Run these commands and compare the output:</p>
+${sh(`zig build --help
+zig build check
+zig build test
+zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-linux-musl --summary all`)}
+<p>The goal is to stop treating <code>build.zig</code> as a magic file. It is a program that creates named graph nodes.</p>

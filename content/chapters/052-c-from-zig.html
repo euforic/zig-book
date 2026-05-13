@@ -1,0 +1,93 @@
+<p>Zig was designed from day one to consume C. You can translate C headers into a Zig module, call C functions, compile C source files, and pass ABI-compatible values across the boundary without hand-writing a full binding layer.</p>
+
+<h2>Translate C headers in build.zig</h2>
+<p>C-translation is a build-system step: <code>std.Build.Step.TranslateC</code>. You declare the headers you want translated; the build system runs the translator, caches the output by content hash, and exposes the result as a normal Zig module.</p>
+
+${z(`// build.zig
+const translate_c = b.addTranslateC(.{
+    .root_source_file = b.path("src/c_headers.h"),
+    .target = target,
+    .optimize = optimize,
+});
+translate_c.addIncludePath(b.path("vendor/include"));
+translate_c.defineCMacroRaw("FEATURE_FOO=1");
+
+const c_mod = translate_c.createModule();
+
+const root = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+root.addImport("c", c_mod);
+
+const exe = b.addExecutable(.{ .name = "app", .root_module = root });
+exe.linkLibC();`)}
+
+<p>Your <code>src/c_headers.h</code> contains the C <code>#include</code> directives for the translated module:</p>
+
+${code('c', `#include <stdio.h>
+#include <string.h>
+#include <math.h>`)}
+
+<p>In your Zig source:</p>
+
+${z(`const c = @import("c");
+
+pub fn main() void {
+    _ = c.printf("translated: %d\\\\n", @as(c_int, 42));
+}`)}
+
+${note('<strong>Why this is better.</strong> The build graph now sees C-translation as a normal step, so cache invalidation is correct: change a header and only translation reruns; the Zig code itself doesn\\u2019t re-translate. You can also inspect the generated Zig file under <code>.zig-cache</code> — invaluable when debugging FFI issues.')}
+
+<h2>Linking against C libraries</h2>
+${z(`exe.linkLibC();                  // link against the system libc
+exe.linkSystemLibrary("z");      // -lz (zlib)
+exe.linkSystemLibrary("ssl");    // -lssl
+
+// Link a local static archive
+exe.addObjectFile(b.path("vendor/libfoo.a"));
+
+// Add include paths and source files for a bundled C library
+exe.addIncludePath(b.path("vendor/sqlite"));
+exe.addCSourceFile(.{
+    .file = b.path("vendor/sqlite/sqlite3.c"),
+    .flags = &.{ "-DSQLITE_THREADSAFE=1", "-O2" },
+});`)}
+
+<p>You can mix and match: link against a system library on Linux, compile the same library from source on Windows, all from one <code>build.zig</code> with a conditional.</p>
+
+<h2>Calling conventions and ABI</h2>
+<p>C functions are <code>extern</code> in Zig. Their calling convention is <code>callconv(.c)</code>. Most translated functions are already extern; if you're declaring a C signature by hand:</p>
+
+${z(`extern "c" fn printf(fmt: [*:0]const u8, ...) c_int;
+
+pub fn main() void {
+    _ = printf("answer: %d\\\\n", @as(c_int, 42));
+}`)}
+
+<p>Variadic functions (the <code>...</code>) work but every variadic arg must be explicitly cast to the C type. Zig doesn't do C's default argument promotions for you — that's a feature.</p>
+
+<h2>C types and Zig types</h2>
+<p>Zig defines C-compatible types whose sizes follow the target ABI:</p>
+<ul>
+  <li><code>c_char</code>, <code>c_short</code>, <code>c_int</code>, <code>c_long</code>, <code>c_longlong</code></li>
+  <li><code>c_uint</code>, <code>c_ushort</code>, <code>c_ulong</code>, <code>c_ulonglong</code></li>
+  <li><code>c_float</code>, <code>c_double</code>, <code>c_longdouble</code></li>
+  <li><code>[*c]T</code> — a C pointer (allows null, allows aliasing rules C expects). Prefer <code>?*T</code> or <code>[*]T</code> in pure Zig code; <code>[*c]</code> exists for translated code.</li>
+</ul>
+
+<h2>Strings across the boundary</h2>
+<p>C strings are null-terminated. Zig represents them as <code>[*:0]const u8</code> (pointer-to-many, sentinel-terminated by 0). String literals in Zig are already <code>[:0]const u8</code> — they're zero-terminated as a courtesy. So <code>"hello"</code> passes to C unchanged.</p>
+
+${z(`const c = @import("c");
+
+const path: [*:0]const u8 = "/etc/hosts";
+const f = c.fopen(path, "r");
+if (f == null) return error.OpenFailed;
+defer _ = c.fclose(f);`)}
+
+<h2>What translate-c can't handle</h2>
+<p>The translator handles the bulk of typical headers, but some C constructs are too dynamic or context-dependent. Function-like macros that expand to expressions are typically not translated; structs with unnamed bitfields can be tricky; <code>_Generic</code> selections don't translate. The fallback is to write a small <code>wrap.c</code> file with explicit functions that wrap the macros, compile it into your build, and call the wrappers from Zig.</p>
+
+${warn('When a C library frees memory it allocated, do <em>not</em> free it from Zig\\u2019s allocator. Use the C function the library prescribes (often a paired <code>foo_free</code>). Mixing allocators is a recipe for undefined behavior.')}

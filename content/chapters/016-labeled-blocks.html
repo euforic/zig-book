@@ -1,0 +1,60 @@
+<p>Most of Zig's control flow can be wrapped in a label. A label turns a block, a loop, or a switch into something you can <code>break</code> out of from arbitrarily deep inside — with a value, if you like.</p>
+
+<h2>Labeled blocks</h2>
+<p>A block prefixed with <code>label:</code> is an expression. <code>break :label value</code> yields <code>value</code> as the block's result. This is the canonical way to do "compute a value with intermediate variables" without a helper function:</p>
+${z(`const total: u32 = sum: {
+    var acc: u32 = 0;
+    for (items) |x| {
+        if (x < 0) break :sum 0; // bail out with 0
+        acc += @intCast(x);
+    }
+    break :sum acc;
+};`)}
+<p>If you fall off the end of a labeled block without a <code>break</code>, the type is <code>void</code> and any value-using context is an error. Always end with a <code>break</code> or use it for its side effects only.</p>
+
+<h2>Labeled loops</h2>
+<p>You can label any loop and <code>break</code> or <code>continue</code> the outer one:</p>
+${z(`fn findInGrid(grid: []const []const u8, ch: u8) ?struct { row: usize, col: usize } {
+    return outer: for (grid, 0..) |row, r| {
+        for (row, 0..) |c, col| {
+            if (c == ch) break :outer .{ .row = r, .col = col };
+        }
+    } else null;
+}`)}
+<p>The <code>else</code> on a labeled <code>for</code> runs if no <code>break</code> fired, exactly like an unlabeled one. The labeled <code>break :outer</code> can carry a value of the loop's element type, and the surrounding expression evaluates to that.</p>
+
+<h2>Labeled switch</h2>
+<p>We previewed this in the chapter on switch. The "continue with a new value" form turns a <code>switch</code> into a small state machine:</p>
+${z(`const Token = enum { plus, minus, num, end };
+
+fn parse(stream: *Lexer) i32 {
+    var acc: i32 = 0;
+    var sign: i32 = 1;
+    sm: switch (stream.next()) {
+        .plus => {
+            sign = 1;
+            continue :sm stream.next();
+        },
+        .minus => {
+            sign = -1;
+            continue :sm stream.next();
+        },
+        .num => |n| {
+            acc += sign * n;
+            sign = 1;
+            continue :sm stream.next();
+        },
+        .end => return acc,
+    }
+}`)}
+<p>The dispatch is reused; <code>continue :sm expr</code> restarts the switch with a new discriminator. We come back to this pattern in Chapter 37 with a complete state-machine example.</p>
+
+<h2>Why labels?</h2>
+<p>Labels are how Zig replaces several features it doesn't have:</p>
+<ul>
+  <li>No <code>do-while</code>: write a <code>while (true)</code> with a labeled <code>break</code>.</li>
+  <li>No "return from arbitrary block": labels do that.</li>
+  <li>No exceptions: labeled control flow plus error unions cover the same use cases.</li>
+  <li>No <code>goto</code>: labels are forward-only and structured.</li>
+</ul>
+<p>The result is verbose by 21st-century standards and remarkably easy to read after a week.</p>

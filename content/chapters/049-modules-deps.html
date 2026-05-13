@@ -1,0 +1,106 @@
+<p>Zig has a built-in package manager. Dependencies are declared in <code>build.zig.zon</code> (Zig Object Notation, a JSON-like syntax that's actually Zig comptime values). Fetching happens automatically when you run <code>zig build</code>; sources are stored in a global cache keyed by content hash; integrity is enforced via SHA-256.</p>
+
+<h2>The .zon file</h2>
+${code('zig', `.{
+    .name = .my_project,
+    .version = "0.1.0",
+    .fingerprint = 0xabc123def456789a,
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{
+        .mach = .{
+            .url = "https://github.com/hexops/mach/archive/<commit>.tar.gz",
+            .hash = "1220abcd...ef01",
+        },
+        .local_helpers = .{
+            .path = "deps/helpers",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}`)}
+
+<p>Each dependency entry is either a URL with an expected content hash (Zig refuses to use a tarball whose hash doesn't match) or a local <code>.path</code> for in-tree packages. The <code>.paths</code> field declares which files belong to this package when it is consumed as a dependency — this lets you exclude test data, benchmarks, or examples from downstream tarballs.</p>
+
+${note('<strong>0.16 fingerprints.</strong> Every package gets a unique fingerprint generated at <code>zig init</code> time. It identifies the package across renames and helps the build system detect when two dependencies are actually the same upstream project under different names.')}
+
+<h2>Adding a dependency to your build</h2>
+${z(`const mach = b.dependency("mach", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+const root = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+root.addImport("mach", mach.module("mach"));`)}
+
+<p><code>b.dependency</code> resolves the dependency at build time, passing through option values. <code>dep.module("name")</code> retrieves a module the dependency author exported in their own <code>build.zig</code>. Now your code can <code>@import("mach")</code>.</p>
+
+<h2>Fetching</h2>
+<p>Run <code>zig fetch --save URL</code> to download a tarball, compute its hash, and update <code>build.zig.zon</code> automatically. This is the recommended way to add a dependency — it removes the manual "copy the hash from the error message" step.</p>
+
+${sh(`# Add a dependency by URL
+zig fetch --save https://github.com/example/lib/archive/v1.2.3.tar.gz
+
+# Use a git ref
+zig fetch --save git+https://github.com/example/lib#main`)}
+
+<h2>Local package overrides</h2>
+<p>When you are debugging a bug across your app and a library, you can point a dependency at a local checkout without editing <code>build.zig.zon</code>.</p>
+
+${sh('zig build --dep-overrides=mach=../mach-fork')}
+
+<p>This swaps the resolved location of <code>mach</code> without modifying <code>build.zig.zon</code>. CI continues using the upstream pin; you iterate locally.</p>
+
+<h2>Project-local fetch directory</h2>
+<p>By default, fetched packages land in the global cache at <code>~/.cache/zig</code>. You can opt into a project-local directory:</p>
+
+${sh('zig build --global-cache-dir .zig-cache/global')}
+
+<p>Useful for sandboxed CI environments, reproducible builds, or when you simply don't want cross-project cache pollution.</p>
+
+<h2>Exposing modules from your package</h2>
+<p>If you're publishing a library, downstream consumers will call <code>dep.module("yourname")</code>. You have to declare which modules to expose:</p>
+
+${z(`const lib_mod = b.addModule("mylib", .{
+    .root_source_file = b.path("src/root.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+
+const lib = b.addLibrary(.{
+    .linkage = .static,
+    .name = "mylib",
+    .root_module = lib_mod,
+});
+b.installArtifact(lib);`)}
+
+<p><code>addModule</code> (vs <code>createModule</code>) registers the module by name on the build graph, making it discoverable to dependents. Publish your tag, point users at the URL, and they're consuming your library.</p>
+
+<h2>Try it: split an app into a package</h2>
+<p>Take any function from <code>src/main.zig</code>, move it to <code>src/root.zig</code>, and expose it as a named module. Then import that module back into the executable.</p>
+${z(`const lib_mod = b.addModule("tool_core", .{
+    .root_source_file = b.path("src/root.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+
+const exe_mod = b.createModule(.{
+    .root_source_file = b.path("src/main.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+exe_mod.addImport("tool_core", lib_mod);`)}
+
+<p>Now <code>src/main.zig</code> can call <code>@import("tool_core")</code>. This is the smallest version of the package boundary you will use in real projects.</p>
+
+${warn('Hashes are non-negotiable. If a tarball at a URL changes content but keeps the same URL, the hash mismatch will fail the build. This is intentional — supply-chain integrity is enforced, not advisory.')}

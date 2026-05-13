@@ -1,0 +1,75 @@
+<p>Zig has more pointer types than C, and each one carries information the compiler uses to reject mistakes. The cost is a moment of mental overhead picking the right one; the benefit is that the pointer type itself documents what's at the other end.</p>
+
+<h2>*T — one of these</h2>
+<p>The single-item pointer is the everyday case. It points to exactly one value of type <code>T</code>. You dereference with <code>.*</code>:</p>
+${z(`var x: i32 = 42;
+const p: *i32 = &x;
+p.* += 1;            // x is now 43
+std.debug.print("{}\\n", .{p.*});`)}
+<p>A <code>*T</code> is guaranteed non-null. You cannot do pointer arithmetic on it, you cannot index it. It's just "one <code>T</code> over there."</p>
+
+<h2>[*]T — many of these, unknown count</h2>
+<p>The many-item pointer is a C-style raw pointer: it points to a sequence of <code>T</code>, with no length information. You index it, you do pointer arithmetic, you do not know where it ends.</p>
+${z(`extern fn c_strlen(s: [*:0]const u8) usize;
+
+const arr: [4]u8 = .{ 1, 2, 3, 4 };
+const p: [*]const u8 = &arr;
+const third = p[2]; // 3`)}
+<p>Most Zig code uses <code>[]T</code> (a slice — pointer plus length) instead. The many-item pointer mostly appears at C boundaries.</p>
+
+<h2>[*:s]T — sentinel-terminated</h2>
+<p>A many-item pointer where a known sentinel value marks the end. <code>[*:0]const u8</code> is a C string:</p>
+${z(`const c_str: [*:0]const u8 = "hello";
+// The compiler knows there's a 0 byte at index 5.`)}
+<p>Slices can have sentinels too: <code>[:0]const u8</code> is a slice whose backing memory has a known terminator past the length.</p>
+
+<h2>[]T — slices</h2>
+<p>A slice is a struct: <code>{ ptr: [*]T, len: usize }</code>. It's the default way to talk about "some <code>T</code>s in a row." We covered slices in Part II; mention here because they're the most common pointer-shaped thing you'll handle.</p>
+${z(`fn sum(xs: []const u32) u32 {
+    var total: u32 = 0;
+    for (xs) |x| total += x;
+    return total;
+}`)}
+
+<h2>Const and address spaces</h2>
+<p><code>*const T</code> is a read-only pointer. <code>*T</code> is read-write. The compiler will let you go read-write → read-only implicitly, never the other way.</p>
+${z(`fn read(p: *const i32) i32 { return p.*; }
+
+var x: i32 = 5;
+_ = read(&x);   // ok: *i32 coerces to *const i32`)}
+
+<h2>Alignment</h2>
+<p>Every pointer type carries an alignment. A <code>*u32</code> is aligned to 4 bytes by default; the type signature says <code>*align(4) u32</code> when written long. You can request looser alignment:</p>
+${z(`const bytes: [16]u8 align(4) = .{0} ** 16;
+const p: *const align(1) u32 = @ptrCast(&bytes[1]); // misaligned read
+const v = p.*;`)}
+<p>Misaligned access is allowed but the compiler will not assume natural alignment for code generation. Going the other direction — claiming more alignment than the data has — is undefined behavior caught by safe builds.</p>
+
+<h2>*anyopaque — type-erased pointer</h2>
+<p>The escape hatch. <code>*anyopaque</code> is a pointer to "I don't know what." You can't dereference it; you must cast it back to a concrete type first:</p>
+${z(`fn callback(ctx: *anyopaque, value: i32) void {
+    const self: *MyContext = @ptrCast(@alignCast(ctx));
+    self.handle(value);
+}`)}
+<p>The pattern <code>@ptrCast(@alignCast(ptr))</code> is the canonical way to recover a typed pointer from an opaque one. Use sparingly — type-erasure throws away safety.</p>
+
+<h2>?*T — optional pointer</h2>
+<p>A pointer that might be null. The compiler uses the all-zero bit pattern as the null encoding, so <code>?*T</code> takes the same space as <code>*T</code>:</p>
+${z(`fn find(needle: u8) ?*const u8 { _ = needle; return null; }
+
+if (find('x')) |p| {
+    std.debug.print("found at {*}\\n", .{p});
+} else {
+    std.debug.print("not found\\n", .{});
+}`)}
+<p>This is the right choice for "maybe a pointer." Don't use a separate boolean to track validity — let the type system carry it.</p>
+
+<h2>Taking addresses</h2>
+<p><code>&x</code> takes the address of <code>x</code>. The result's type depends on <code>x</code>:</p>
+<ul>
+  <li><code>&local_int</code> → <code>*i32</code></li>
+  <li><code>&array[2]</code> → <code>*u8</code> (or whatever element type)</li>
+  <li><code>&array</code> → <code>*[N]u8</code> (pointer to the whole array)</li>
+  <li><code>&function</code> → <code>*const fn (...) ...</code></li>
+</ul>
+<p>Taking the address of a temporary is fine, but the temporary's lifetime ends with the expression — keep references shorter than the things they point to.</p>

@@ -1,0 +1,57 @@
+<p>Zig has a single, ruthless rule about memory: <strong>nothing allocates without an allocator parameter</strong>. The standard library, every third-party library, every function you write — if it needs heap memory, it takes an <code>Allocator</code> argument. There is no global heap, no <code>new</code>, no default behavior to leak around.</p>
+
+<p>This rule makes Zig code, even Zig you've never seen before, easy to audit: scan for <code>Allocator</code> parameters and you've found every byte of potential heap traffic.</p>
+
+<h2>Where values live</h2>
+<p>Variables go on the stack by default. Compile-time-known values may live in read-only memory (the binary itself). Heap allocations are explicit, always:</p>
+${z(`var on_stack: [1024]u8 = undefined;             // stack
+const literal = "hello";                         // .rodata
+const heap = try allocator.alloc(u8, 1024);     // heap (explicit)
+defer allocator.free(heap);`)}
+<p>There is no third option. No "boxed" type, no implicit moves, no garbage collector that might run.</p>
+
+<h2>The Allocator interface</h2>
+<p>An <code>std.mem.Allocator</code> is a fat pointer: a context pointer plus a vtable of function pointers. Implementations include general-purpose, arena, fixed-buffer, page, C-malloc, and several specialized ones. We'll cover them next chapter.</p>
+${z(`pub fn run(allocator: std.mem.Allocator) !void {
+    const buf = try allocator.alloc(u8, 4096);
+    defer allocator.free(buf);
+    // ... use buf ...
+}`)}
+<p>The caller decides which allocator. Tests use <code>std.testing.allocator</code> (which catches leaks). Long-running services often use the general-purpose allocator. Short-lived request handlers often use an arena. Same function, three different memory strategies, zero changes to <code>run</code>.</p>
+
+${note("Container ownership", "<p style=\"margin:0\"><code>ArrayList(T)</code>, <code>PriorityQueue</code>, <code>PriorityDequeue</code>, and <code>std.array_hash_map</code> maps use <code>.empty</code> plus allocator-at-call-site methods. Other containers, such as <code>AutoHashMap</code>, store an allocator. Always check whether the container stores an allocator or asks for one on mutation.</p>")}
+
+<h2>Ownership without a borrow checker</h2>
+<p>Zig has no borrow checker. Ownership is a convention, communicated through documentation, parameter types, and discipline. The common rules:</p>
+<ul>
+  <li>If a function takes a slice <code>[]const u8</code>, it borrows for the call only — don't keep it after.</li>
+  <li>If a function returns an allocated slice, the caller frees it.</li>
+  <li>If a function takes an <code>Allocator</code>, it may allocate; ownership of any returned allocation transfers to the caller.</li>
+  <li>Containers track their own allocations and free them in <code>deinit</code>.</li>
+</ul>
+<p>None of this is enforced by the compiler. <em>All</em> of it is enforced by the GeneralPurposeAllocator's leak detector in debug builds.</p>
+
+<h2>undefined and uninitialized memory</h2>
+<p>You can leave a variable uninitialized by assigning <code>undefined</code>:</p>
+${z(`var buf: [256]u8 = undefined;
+const written = try writer.write(&buf);`)}
+<p>In safe builds, <code>undefined</code> fills the memory with <code>0xAA</code> bytes so use-before-init bugs are loud. In fast builds, it's literally whatever was there. Read from <code>undefined</code> before writing and you have undefined behavior.</p>
+
+<h2>The stack is yours</h2>
+<p>Unlike many languages, Zig doesn't punish stack allocation. Multi-kilobyte stack buffers are common and idiomatic:</p>
+${z(`var path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+const n = try std.Io.Dir.cwd().realPathFile(io, "relative/thing", &path_buf);
+const path = path_buf[0..n];`)}
+<p>If you can fit it on the stack and the size is bounded, do. The allocator only enters the picture for unbounded or long-lived data.</p>
+
+<h2>Three flavors of "alloc"</h2>
+<p>The allocator interface gives you three primitives:</p>
+${z(`const p = try allocator.create(Point);          // one T
+defer allocator.destroy(p);
+
+const buf = try allocator.alloc(u8, 1024);       // many T (slice)
+defer allocator.free(buf);
+
+const huge = try allocator.alignedAlloc(u8, .@"4096", 1 << 20); // aligned slice
+defer allocator.free(huge);`)}
+<p>That's all you usually need. Higher-level helpers like <code>dupe</code>, <code>realloc</code>, and friends build on these three.</p>

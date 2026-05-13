@@ -1,0 +1,92 @@
+<p>Most languages have two languages: the runtime language and a macro language. Zig has one. The same code that runs your program also runs your build-time metaprogramming. Functions, control flow, structs, even string parsing — all of it can execute at compile time, producing values, types, or whole structs as output.</p>
+
+<p>The mechanism is the keyword <code>comptime</code>. It marks values, parameters, blocks, and expressions as "evaluate this before the program runs."</p>
+
+<h2>comptime values</h2>
+<p>A <code>comptime</code> variable is computed at compile time. Its value is known to the compiler:</p>
+${z(`comptime var counter: u32 = 0;
+comptime {
+    counter += 1;
+    counter *= 2;
+}
+// counter is now 2 — at compile time
+
+const std = @import("std");
+pub fn main() void {
+    std.debug.print("counter = {}\\n", .{counter});
+}`)}
+<p>The variable doesn't exist at runtime — it's been folded into the program's constants.</p>
+
+<h2>comptime blocks</h2>
+<p>A bare <code>comptime { ... }</code> block runs at compile time. Useful for assertions about types, sizes, or alignments:</p>
+${z(`comptime {
+    if (@sizeOf(usize) != 8) @compileError("64-bit only, sorry");
+    std.debug.assert(@bitSizeOf(u8) == 8);
+}`)}
+<p><code>@compileError</code> aborts compilation with a message. <code>@compileLog</code> prints a debug message during compilation. These exist because compile-time code can't write to stdout.</p>
+
+<h2>comptime parameters</h2>
+<p>A function parameter marked <code>comptime</code> must be known at compile time, and the function is specialized for each value:</p>
+${z(`fn repeat(comptime count: usize, value: u8) [count]u8 {
+    var buf: [count]u8 = undefined;
+    @memset(&buf, value);
+    return buf;
+}
+
+const eights = repeat(8, '8'); // type is [8]u8
+const fives = repeat(5, '5');  // type is [5]u8 — different function instance`)}
+<p>Notice the <em>type</em> of the result depends on a parameter. That's only possible because <code>count</code> is comptime; runtime values can't influence types.</p>
+
+<h2>Types are first-class</h2>
+<p>The big idea: <code>type</code> is itself a type. Functions can take and return types. Variables can hold types. All of this happens at comptime.</p>
+${z(`fn Pair(comptime A: type, comptime B: type) type {
+    return struct {
+        first: A,
+        second: B,
+    };
+}
+
+const IntStr = Pair(i32, []const u8);
+const p: IntStr = .{ .first = 42, .second = "hi" };`)}
+<p><code>Pair</code> is a function that, given two types, returns a new struct type. We just spelled generics — with no special syntax.</p>
+
+<h2>comptime is contagious</h2>
+<p>An <code>if</code>, <code>while</code>, or <code>switch</code> whose condition is known at comptime can do things impossible at runtime: branch on types, declare variables of different types per branch, generate different code paths per build:</p>
+${z(`fn isSigned(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .int => |info| info.signedness == .signed,
+        else => false,
+    };
+}
+
+comptime {
+    std.debug.assert(isSigned(i32));
+    std.debug.assert(!isSigned(u32));
+}`)}
+
+<h2>Inline for and unrolled loops</h2>
+<p><code>inline for</code> is a comptime loop that unrolls at compile time. The loop variable is comptime-known on each iteration:</p>
+${z(`fn printFields(value: anytype) void {
+    const T = @TypeOf(value);
+    inline for (@typeInfo(T).@"struct".fields) |field| {
+        std.debug.print("{s} = {any}\\n", .{ field.name, @field(value, field.name) });
+    }
+}`)}
+<p>The body runs once at compile time per field; the generated code has each <code>print</code> baked in with the field name as a literal.</p>
+
+<h2>When is something comptime?</h2>
+<p>Zig is aggressive about evaluating things at compile time. The general rule: if all the inputs to an expression are comptime-known, the result is comptime-known. Things that <em>require</em> comptime:</p>
+<ul>
+  <li>Types (you can't have a runtime <code>type</code> value).</li>
+  <li>Array length expressions, like the <code>N</code> in <code>[N]T</code>.</li>
+  <li>The condition of an <code>inline if</code>, <code>inline for</code>, <code>inline while</code>.</li>
+  <li><code>comptime</code>-marked parameters.</li>
+  <li>The arguments to many builtins (<code>@field</code>, <code>@hasDecl</code>, <code>@typeInfo</code>).</li>
+</ul>
+
+${tip("Don't reach for comptime first", "<p style=\"margin:0\">Comptime is wonderful and tempting to overuse. Start with regular code; lift things into comptime when you have a clear reason — generics, table generation, build-time configuration. Comptime-heavy code can be hard to read and hard to debug.</p>")}
+
+<h2>The forbidden things</h2>
+<p>Comptime code runs in a deterministic sandbox: it can't open files, do I/O, take the address of a runtime value, or call functions through opaque pointers. <code>@embedFile</code> is the way to pull files into the program; <code>@import</code> is the way to bring in other modules. There is no general comptime FFI.</p>
+
+<p>The sandbox is what makes comptime safe to rely on. The same source, compiled twice, produces the same binary.</p>

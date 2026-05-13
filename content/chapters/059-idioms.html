@@ -1,0 +1,111 @@
+<p>You've made it through twelve parts. By now you can read most Zig code, write a multi-module project, manage memory deliberately, talk to C, and ship a cross-platform binary. This final chapter is a collection of idioms experienced Zig programmers reach for, and a list of where to look next to keep learning.</p>
+
+<h2>Idioms worth internalizing</h2>
+
+<h3>Allocators are parameters</h3>
+<p>Take an allocator. Don't reach for a global. The function signature becomes self-documenting — "this function allocates" — and callers retain control.</p>
+
+${z(`pub fn loadConfig(allocator: std.mem.Allocator, path: []const u8) !Config { ... }`)}
+
+<h3>defer is the deinit pattern</h3>
+<p>For every <code>init</code> there is a <code>deinit</code>. Pair them with <code>defer</code> right at the call site:</p>
+
+${z(`var list: std.ArrayList(u32) = .empty;
+defer list.deinit(allocator);`)}
+
+<h3>errdefer for partial cleanup</h3>
+${z(`pub fn create(io: std.Io, allocator: std.mem.Allocator) !*Resource {
+    const self = try allocator.create(Resource);
+    errdefer allocator.destroy(self);
+    self.buffer = try allocator.alloc(u8, 1024);
+    errdefer allocator.free(self.buffer);
+    self.file = try std.Io.Dir.cwd().createFile(io, "data", .{});
+    return self;
+}`)}
+
+<h3>Tagged unions for state machines</h3>
+${z(`const State = union(enum) {
+    idle,
+    loading: struct { progress: f32 },
+    ready: []const u8,
+    failed: anyerror,
+};`)}
+
+<h3>Comptime as code generation</h3>
+<p>If you find yourself writing similar code five times with one varying type, lift it into a comptime function that returns a type. Generic containers, polymorphic algorithms, table-driven dispatchers all fall out of this.</p>
+
+<h3>Slices, not C pointers</h3>
+<p>Anywhere you'd write <code>T*</code> + length in C, use <code>[]T</code> in Zig. You get length-checked iteration and clean APIs.</p>
+
+<h3>Error sets per layer</h3>
+<p>Don't pile every possible error into a single huge error set. Each layer of your code defines its own narrow error set; the next layer up either re-raises (with <code>try</code> inferring the set) or maps to its own.</p>
+
+<h2>Traps to avoid</h2>
+
+<h3>Holding a slice across reallocation</h3>
+${z(`var list: std.ArrayList(u32) = .empty;
+defer list.deinit(allocator);
+try list.appendSlice(allocator, &.{ 1, 2, 3 });
+const view = list.items;       // points into list's buffer
+try list.append(allocator, 4);  // may reallocate \\u2014 view is now dangling
+std.debug.print("{}\\\\n", .{view[0]}); // UB`)}
+
+<p>The fix: either copy the data out, or don't mutate the list while a borrow exists.</p>
+
+<h3>Forgetting to capture optionals</h3>
+${z(`// Wrong
+if (maybe_value != null) {
+    const v = maybe_value.?;  // works, but redundant
+}
+
+// Right
+if (maybe_value) |v| {
+    // use v
+}`)}
+
+<h3>Mixing comptime values into runtime data</h3>
+<p>A <code>comptime_int</code> or <code>comptime_float</code> is unbounded. When it ends up in a runtime expression, it has to coerce to a concrete type — often <code>i64</code> or <code>f64</code>. If that's not what you want, annotate explicitly.</p>
+
+<h3>Comparing strings with ==</h3>
+<p><code>==</code> on slices compares pointer and length, not contents. Use <code>std.mem.eql(u8, a, b)</code>.</p>
+
+<h3>Treating C strings like Zig strings</h3>
+<p>A <code>[*:0]const u8</code> from C has no length until you scan for the terminator. Use <code>std.mem.span(cstr)</code> to turn it into a real <code>[]const u8</code> before passing it to Zig APIs.</p>
+
+<h2>Performance habits</h2>
+<ul>
+  <li>Profile before optimizing. Zig binaries play well with <code>perf</code>, Instruments, and VTune.</li>
+  <li>Try <code>ReleaseFast</code> for benchmarks; the difference vs <code>Debug</code> is usually 5\\u201320x.</li>
+  <li>Reach for <code>@Vector</code> when you have data-parallel arithmetic over chunks of 4, 8, or 16 elements.</li>
+  <li>Arena allocators win in request/response and frame-based workloads. Use them.</li>
+  <li>For hot paths, prefer iteration over recursion; the compiler can sometimes vectorize loops but rarely tail-calls.</li>
+</ul>
+
+<h2>Where to go next</h2>
+
+<h3>Read the standard library</h3>
+<p>The Zig stdlib is small and readable. Whenever you wonder "how does Zig do X?" — open <code>std/X.zig</code>. The source <em>is</em> the documentation in the best sense: idiomatic, tested, and current.</p>
+
+<h3>Build something concrete</h3>
+<p>Pick a real problem. A toy language interpreter, a TCP echo server, a static site generator, an embedded firmware blinky. Build it end to end. Cross-compile it. Ship a release. The depth of understanding from one finished project exceeds anything from twenty tutorials.</p>
+
+<h3>Read other people's Zig</h3>
+<p>The Zig source itself is in Zig. Tigerbeetle, Bun, Mach engine, Ghostty terminal, and many more are public Zig codebases of substantial size. Read them with intent: how do they structure modules, name errors, organize tests, lay out build scripts?</p>
+
+<h3>Follow the language</h3>
+<p>Zig is pre-1.0 and the language evolves. Watch the release notes (one or two major releases per year, plus point releases). Each release has a write-up that explains the why behind each change — high-quality reading even if you skip the patch.</p>
+
+<h3>Keep a reference stack</h3>
+<p>For active work, keep three sources close: this book for the learning path, the official 0.16.0 language reference for exact semantics, and your installed <code>std_dir</code> for API truth. When those disagree with a blog post, trust the compiler and the source.</p>
+
+<h3>Keep practicing after the book</h3>
+<p>Use Ziglings when syntax is rusty, Exercism when you want repetition and feedback, and project-based material when you need a larger arc. The point is not more content consumption; the point is writing enough Zig that error handling, allocation, and build scripts become ordinary.</p>
+
+<h3>Participate</h3>
+<p>The Zig community lives on the official Discord, IRC, and the project's Codeberg discussions. Show up with a small, well-formed question or contribution; the people are warm and the bar for useful contribution is lower than you'd think.</p>
+
+${tip('The best Zig programmers don\\u2019t memorize the standard library. They develop a feel for where a feature would live and an instinct for what good Zig looks like. That feel is what twelve parts of practice and reading buys you.')}
+
+<h2>Closing</h2>
+<p>Zig is a small language that asks you to be explicit about the things that matter — memory, time, errors, target — and gets out of your way for everything else. The reward for that explicitness is code that's easier to read at scale, easier to port to anything with a CPU, and easier to reason about under pressure. The reward for finishing this book is that you can write that code.</p>
+<p>Go build something.</p>

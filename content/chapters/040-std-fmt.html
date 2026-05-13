@@ -1,0 +1,76 @@
+<p>Zig has no <code>printf</code>. It has <code>std.fmt</code>: a small set of routines built around comptime-checked format strings. The format string is parsed at compile time, the argument types are inspected at compile time, and any mismatch is a build error. Runtime cost is what you'd expect from a printf — just without the footguns.</p>
+
+<h2>The basics</h2>
+${z(`const std = @import("std");
+
+pub fn main() void {
+    std.debug.print("hello {s}, you are {} years old\\n", .{ "alice", 30 });
+}`)}
+<p>The first argument is the format string. The second is a tuple (anonymous struct) of arguments. Each placeholder in the string consumes one tuple element.</p>
+
+<h2>Placeholder syntax</h2>
+<p>A placeholder is <code>{spec}</code>. The spec selects how the argument is rendered. The common ones:</p>
+<ul>
+  <li><code>{}</code> — default for the type. Numbers in decimal, strings as bytes, etc.</li>
+  <li><code>{s}</code> — render as string (for <code>[]const u8</code>).</li>
+  <li><code>{d}</code> — decimal integer.</li>
+  <li><code>{x}</code> / <code>{X}</code> — lowercase/uppercase hex.</li>
+  <li><code>{b}</code> — binary.</li>
+  <li><code>{o}</code> — octal.</li>
+  <li><code>{c}</code> — single byte as a char.</li>
+  <li><code>{e}</code> / <code>{E}</code> — scientific notation float.</li>
+  <li><code>{any}</code> — generic dump using <code>@typeInfo</code>, useful for debugging.</li>
+  <li><code>{*}</code> — pointer address.</li>
+</ul>
+
+<h2>Width, alignment, fill</h2>
+<p>The full spec is <code>{[width][.precision][specifier]}</code> with optional alignment prefix:</p>
+${z(`std.debug.print("{d:5}\\n", .{42});    // "   42"  width 5, right aligned
+std.debug.print("{d:<5}\\n", .{42});   // "42   "  left aligned
+std.debug.print("{d:0>5}\\n", .{42});  // "00042"  fill char 0
+std.debug.print("{e:.3}\\n", .{3.14159}); // 3.142e0
+std.debug.print("{s:.<10}\\n", .{"hi"}); // "hi........"`)}
+
+<h2>The four shapes of formatter</h2>
+<p>Beyond <code>std.debug.print</code> (which writes to stderr), the formatting routines come in a small family:</p>
+${z(`// Allocate a formatted string
+const s = try std.fmt.allocPrint(allocator, "{} bytes", .{n});
+defer allocator.free(s);
+
+// Format into a caller-provided buffer
+var buf: [64]u8 = undefined;
+const slice = try std.fmt.bufPrint(&buf, "x = {d}", .{x});
+
+// Format to any writer (file, stream, etc.)
+try writer.print("{s}\\n", .{name});
+
+// Just compute the rendered length (no output)
+const n = std.fmt.count("{} bytes", .{n});`)}
+<p>The same format strings work everywhere. Pick the routine by where the output goes.</p>
+
+<h2>Custom format methods</h2>
+<p>A type can define its own formatting by implementing <code>fn format(self, writer) !void</code>. When you place a value of that type in a placeholder, your method runs:</p>
+${z(`const Vec3 = struct {
+    x: f32, y: f32, z: f32,
+
+    pub fn format(self: Vec3, writer: anytype) !void {
+        try writer.print("({d:.2}, {d:.2}, {d:.2})", .{ self.x, self.y, self.z });
+    }
+};
+
+std.debug.print("v = {}\\n", .{Vec3{ .x = 1, .y = 2, .z = 3 }});
+// v = (1.00, 2.00, 3.00)`)}
+<p>This is duck-typed: any type with a matching <code>format</code> method participates. The signature shape may vary slightly across stdlib versions; see the docs for the exact form.</p>
+
+<h2>Parsing</h2>
+<p><code>std.fmt</code> isn't just for printing. It also parses:</p>
+${z(`const n = try std.fmt.parseInt(i32, "42", 10);          // base 10
+const f = try std.fmt.parseFloat(f64, "3.14");
+const u = try std.fmt.parseUnsigned(u64, "0xff", 0);    // auto-detect base from prefix`)}
+<p>Both return error unions on malformed input. There's no silent zero on failure.</p>
+
+<h2>Compile-time validation</h2>
+<p>If you write <code>{d}</code> with a string argument, or supply two args for one placeholder, the build fails:</p>
+${z(`// std.fmt.print("hello {d}", .{"world"});
+// build error: invalid format string '{d}' for type '[]const u8'`)}
+<p>This catches an entire class of bugs that bedevil C and many dynamic languages. The cost is that format strings cannot be runtime-computed — but that's also a security win, since format-string injection is impossible.</p>

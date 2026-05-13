@@ -1,0 +1,87 @@
+<p>An <em>array</em> in Zig is a contiguous block of values with a length known at compile time. The length is part of the type: <code>[3]u8</code> and <code>[4]u8</code> are different types. Arrays live on the stack (or wherever you put them); they don't allocate.</p>
+
+<h2>Declaring arrays</h2>
+${z(`const a = [3]u8{ 1, 2, 3 };           // explicit length
+const b = [_]u8{ 1, 2, 3 };           // inferred length
+const c: [5]i32 = .{ 1, 2, 3, 4, 5 }; // anonymous list literal
+var d: [10]f32 = undefined;            // uninitialized; you must fill it
+var e = [_]u8{0} ** 16;                // repeat: 16 zero bytes
+const f = [_]u8{ 0x00 } ** 4 ++ "OK"; // concat with ++ (compile time)`)}
+<p>The <code>**</code> operator repeats; <code>++</code> concatenates. Both are compile-time only.</p>
+
+<h2>Length and indexing</h2>
+${z(`const arr = [_]i32{ 10, 20, 30, 40 };
+const n = arr.len;       // 4 — compile-time known constant
+const first = arr[0];    // 10
+const last = arr[arr.len - 1]; // 40
+// arr[4] would be a compile error if the compiler proves it; otherwise
+// safety-checked at runtime in Debug/Safe.`)}
+
+<h2>Iteration</h2>
+${z(`const items = [_]i32{ 1, 2, 3, 4, 5 };
+
+// Indexed loop (compile-time known length → no runtime bounds check needed):
+for (items) |x| {
+    std.debug.print("{}\\n", .{x});
+}
+
+// With index:
+for (items, 0..) |x, i| {
+    std.debug.print("[{}] = {}\\n", .{ i, x });
+}
+
+// Multiple arrays in lockstep:
+const keys = [_][]const u8{ "a", "b", "c" };
+const vals = [_]u32{ 1, 2, 3 };
+for (keys, vals) |k, v| {
+    std.debug.print("{s} = {}\\n", .{ k, v });
+}`)}
+<p>Zig's <code>for</code> iterates over arrays, slices, and integer ranges. You'll see all three throughout the book.</p>
+
+<h2>Multidimensional arrays</h2>
+${z(`const grid: [3][3]u8 = .{
+    .{ 1, 0, 0 },
+    .{ 0, 1, 0 },
+    .{ 0, 0, 1 },
+};
+
+const center = grid[1][1]; // 1
+const row: [3]u8 = grid[0]; // arrays are copied by value
+
+// Initialize with a comptime expression:
+var zeros = [_][_]u8{ [_]u8{0} ** 8 } ** 8; // 8x8 zeros`)}
+<p>Arrays are values, not references. Assigning a row makes a copy. This is fine for small arrays; large ones you want to address by pointer.</p>
+
+<h2>Arrays in functions</h2>
+<p>Passing a fixed-size array as a parameter makes a copy:</p>
+${z(`fn sum(arr: [4]i32) i32 {
+    var total: i32 = 0;
+    for (arr) |x| total += x;
+    return total;
+}
+
+const data = [_]i32{ 1, 2, 3, 4 };
+const s = sum(data);  // 'data' copied`)}
+<p>That's rarely what you want. Pass a slice or a pointer instead — covered in the next chapter.</p>
+
+<h2>Array constants vs array variables</h2>
+${z(`const a = [_]u8{ 1, 2, 3 };
+// a[0] = 99;  // error: cannot modify const
+
+var b = [_]u8{ 1, 2, 3 };
+b[0] = 99;  // ok`)}
+
+<h2>Sentinel-terminated arrays</h2>
+<p>Zig has a separate notion: an array that contains a terminating value at index <code>len</code>. The type is written <code>[N:S]T</code> — array of <code>N</code> elements of <code>T</code> with sentinel <code>S</code>.</p>
+${z(`const z = [4:0]u8{ 'h', 'i', '!', 0 }; // length 4, sentinel 0 at z[4]
+// z[4] == 0 is guaranteed; it's part of the type.
+
+const literal: *const [2:0]u8 = "hi";
+// String literals are sentinel-terminated arrays.`)}
+<p>This is how Zig represents strings compatibly with C: a string literal is a pointer to a null-terminated array of bytes. The sentinel lets Zig hand the underlying memory to a C function expecting <code>const char *</code> without conversion.</p>
+
+<h2>@Vector — for SIMD</h2>
+<p>Distinct from arrays: <code>@Vector(N, T)</code> is a SIMD vector type. Arithmetic on vectors uses the host's SIMD instructions when possible. We'll cover it in Chapter 34.</p>
+${z(`const v: @Vector(4, f32) = .{ 1, 2, 3, 4 };
+const w: @Vector(4, f32) = .{ 10, 20, 30, 40 };
+const sum = v + w;  // elementwise; compiles to SIMD on supported targets`)}

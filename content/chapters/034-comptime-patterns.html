@@ -1,0 +1,103 @@
+<p>Beyond generics and reflection, comptime is the right tool for a handful of recurring problems. Recognizing these patterns saves you from reinventing them poorly.</p>
+
+<h2>Tables computed at compile time</h2>
+<p>A lookup table you'd otherwise generate with a script can be built inline:</p>
+${z(`const sin_table: [256]f32 = blk: {
+    var t: [256]f32 = undefined;
+    var i: usize = 0;
+    while (i < 256) : (i += 1) {
+        const x = @as(f32, @floatFromInt(i)) * std.math.tau / 256.0;
+        t[i] = std.math.sin(x);
+    }
+    break :blk t;
+};`)}
+<p>The table is computed once during compilation and baked into the binary as a constant. The runtime sees only the result — no startup cost, no separate generator.</p>
+
+<h2>Validating string literals</h2>
+<p>If a function takes a format string or regex or SQL fragment that must be syntactically valid, validate it at comptime:</p>
+${z(`fn precompiledRegex(comptime pattern: []const u8) Regex {
+    comptime {
+        validatePattern(pattern) catch |e| @compileError(@errorName(e) ++ " in " ++ pattern);
+    }
+    return Regex.init(pattern);
+}
+
+const re = precompiledRegex("[a-z]+");`)}
+<p>Misspell the pattern and the program <em>fails to build</em>, not at runtime. The technique generalizes to anything where the validity of a constant input matters.</p>
+
+<h2>Generating switch arms</h2>
+<p>An <code>inline for</code> over an enum's tags lets you generate switch arms automatically:</p>
+${z(`fn handlerName(tag: Event) []const u8 {
+    return switch (tag) {
+        inline else => |t| @tagName(t),
+    };
+}`)}
+<p>The <code>inline else</code> with a capture is a common idiom: it expands the else branch once per remaining tag, with the tag captured at comptime.</p>
+
+<h2>Tagged dispatch without vtables</h2>
+<p>When you have a tagged union and want different code per variant, the combination of switch and inline lets you keep types specialized:</p>
+${z(`const Shape = union(enum) {
+    circle: struct { r: f32 },
+    rect: struct { w: f32, h: f32 },
+    triangle: struct { a: f32, b: f32, c: f32 },
+};
+
+fn area(s: Shape) f32 {
+    return switch (s) {
+        .circle => |c| std.math.pi * c.r * c.r,
+        .rect => |r| r.w * r.h,
+        .triangle => |t| blk: {
+            const p = (t.a + t.b + t.c) / 2;
+            break :blk @sqrt(p * (p - t.a) * (p - t.b) * (p - t.c));
+        },
+    };
+}`)}
+<p>The compiler knows the payload type in each arm, so accesses are monomorphic. No virtual dispatch, no boxing, no allocation.</p>
+
+<h2>Build-mode-aware code</h2>
+<p><code>@import("builtin")</code> gives you compile-time facts about the build: target OS, CPU features, optimization mode, etc. Branch on them with regular <code>if</code> — the dead arms are stripped:</p>
+${z(`const builtin = @import("builtin");
+
+fn fastSqrt(x: f32) f32 {
+    if (builtin.cpu.arch == .x86_64 and std.Target.x86.featureSetHas(builtin.cpu.features, .sse)) {
+        // use a SIMD intrinsic
+        return @sqrt(x);
+    } else {
+        return @sqrt(x);
+    }
+}
+
+const log_verbose = builtin.mode == .Debug;`)}
+<p>This is how the stdlib produces portable code with platform-specific fast paths.</p>
+
+<h2>Comptime-only assertions</h2>
+<p>Sometimes a property must hold or your design breaks. Express it as a comptime check at the top of the file:</p>
+${z(`comptime {
+    if (@sizeOf(Header) != 16) @compileError("Header must be exactly 16 bytes");
+    if (@alignOf(Packet) < 8) @compileError("Packet must be 8-aligned");
+}`)}
+<p>The check runs once at compile time. If it ever fails, the build breaks with a clear message — orders of magnitude better than a runtime surprise.</p>
+
+<h2>Defaulting through comptime</h2>
+<p>Provide sensible defaults that callers can override, with the override resolved at compile time:</p>
+${z(`fn Config(comptime opts: struct {
+    buffer_size: usize = 4096,
+    sync_on_write: bool = false,
+    encoding: Encoding = .utf8,
+}) type {
+    return struct {
+        // ... use opts.buffer_size, opts.sync_on_write, opts.encoding ...
+    };
+}
+
+const C = Config(.{ .buffer_size = 8192 });`)}
+<p>This is the standard library's pattern: pass an anonymous struct of options where every field has a default. Override only what you need.</p>
+
+<h2>What comptime is bad at</h2>
+<p>Comptime is not the right tool when:</p>
+<ul>
+  <li>The decision is genuinely runtime-only (user input, env vars, file contents at startup).</li>
+  <li>You'd be duplicating a lot of code for each instantiation — the binary gets fat.</li>
+  <li>You want polymorphism with a stable ABI across versions (use a vtable struct instead).</li>
+</ul>
+<p>Comptime is a hammer. Most things in your codebase are not nails. Use it where it pays for itself — generics, tables, build-time validation — and leave the rest as ordinary code.</p>

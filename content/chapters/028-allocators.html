@@ -1,0 +1,103 @@
+<p>An allocator in Zig is an interface, not an algorithm. The interface is small enough to memorize. Once you understand it, every memory strategy in the language is a matter of which implementation you plug in.</p>
+
+<h2>The interface in one screen</h2>
+${z(`pub const Allocator = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        alloc:  *const fn (ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8,
+        resize: *const fn (ctx: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, ret_addr: usize) bool,
+        free:   *const fn (ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void,
+    };
+
+    pub fn alloc(self: Allocator, comptime T: type, n: usize) ![]T { /* ... */ }
+    pub fn create(self: Allocator, comptime T: type) !*T { /* ... */ }
+    pub fn free(self: Allocator, memory: anytype) void { /* ... */ }
+    pub fn destroy(self: Allocator, ptr: anytype) void { /* ... */ }
+};`)}
+<p>The vtable has three operations: <code>alloc</code> (give me bytes), <code>resize</code> (grow this in place if you can), <code>free</code> (take these back). Every higher-level helper builds on these.</p>
+
+<h2>Using an allocator</h2>
+${z(`pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    const list = try allocator.alloc(u32, 100);
+    defer allocator.free(list);
+
+    const point = try allocator.create(Point);
+    defer allocator.destroy(point);
+
+    point.* = .{ .x = 1, .y = 2 };
+}`)}
+<p>The pattern repeats endlessly: <code>try allocator.X()</code>, then <code>defer allocator.free/destroy()</code> on the next line. Once it's muscle memory, you stop seeing it.</p>
+
+<h2>Passing allocators around</h2>
+<p>Most functions take an <code>Allocator</code> as their first parameter:</p>
+${z(`fn loadJson(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !std.json.Parsed(Config) {
+    const data = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20));
+    defer allocator.free(data);
+    return std.json.parseFromSlice(Config, allocator, data, .{});
+}`)}
+<p>The function doesn't care what kind of allocator it is. The caller has all the policy.</p>
+
+<h2>Failing allocations</h2>
+<p>Allocators return <code>error.OutOfMemory</code> on failure. This error is part of the inferred error set of any function that calls them, so it propagates naturally:</p>
+${z(`fn buildList(allocator: std.mem.Allocator) ![]u32 {
+    return try allocator.alloc(u32, 1_000_000_000); // probably fails
+}`)}
+<p>You can't avoid OOM handling in Zig the way you can in languages that abort on allocation failure. You'll see <code>error.OutOfMemory</code> in error unions throughout the stdlib.</p>
+
+${tip("Plan for OOM in libraries, panic for it in apps", "<p style=\"margin:0\">Library code should propagate <code>error.OutOfMemory</code>. Application code that has no recovery story can catch it and panic. Mixed projects often expose both: a <code>tryX</code> form that fails and an <code>X</code> form that panics.</p>")}
+
+<h2>resize: in-place growth</h2>
+<p><code>resize</code> tries to grow or shrink an allocation without moving it. It returns <code>true</code> if it succeeded:</p>
+${z(`var buf = try allocator.alloc(u8, 64);
+defer allocator.free(buf);
+
+if (allocator.resize(buf, 128)) {
+    buf = buf.ptr[0..128]; // same pointer, longer length
+} else {
+    const bigger = try allocator.alloc(u8, 128);
+    @memcpy(bigger[0..buf.len], buf);
+    allocator.free(buf);
+    buf = bigger;
+}`)}
+<p>You rarely call this yourself — container types like <code>ArrayList</code> use it internally to avoid copies on growth.</p>
+
+<h2>Writing your own allocator</h2>
+<p>It's three function pointers and a context. Here's a stub:</p>
+${z(`const MyAllocator = struct {
+    bytes_given: usize = 0,
+
+    pub fn allocator(self: *MyAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *MyAllocator = @ptrCast(@alignCast(ctx));
+        _ = ret_addr; _ = alignment;
+        // delegate to page allocator for demo
+        const ptr = std.heap.page_allocator.rawAlloc(len, alignment, 0) orelse return null;
+        self.bytes_given += len;
+        return ptr;
+    }
+    fn resize(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize, _: usize) bool { return false; }
+    fn free(_: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {}
+};`)}
+<p>Real implementations get more interesting — handling alignment, freelists, fragmentation — but the contract is just those three functions.</p>
+
+<h2>Conventions for parameter order</h2>
+<p>By convention, allocator is the first parameter when present, before any other input. This makes it visually consistent across the stdlib:</p>
+${z(`pub fn dupe(allocator: Allocator, comptime T: type, source: []const T) ![]T { ... }
+pub fn parseFromSlice(comptime T: type, allocator: Allocator, s: []const u8, ...) !Parsed(T) { ... }`)}
+<p>Note: when there's a "comptime type" parameter that has to come first for syntax reasons, allocator slips to second.</p>

@@ -1,0 +1,120 @@
+<p>Filesystem operations live under <code>std.Io.Dir</code> and <code>std.Io.File</code>. The design is organized around <em>directory handles</em> rather than global path strings, and operations that touch the OS take an explicit <code>io</code> handle.</p>
+
+<h2>The cwd shortcut</h2>
+${z(`const std = @import("std");
+
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const cwd = std.Io.Dir.cwd();
+
+    const file = try cwd.openFile(io, "data.txt", .{});
+    defer file.close(io);
+
+    var file_buf: [4096]u8 = undefined;
+    var out_buf: [256]u8 = undefined;
+    var reader = file.reader(io, &file_buf);
+    const n = try reader.interface.readSliceShort(&out_buf);
+    std.debug.print("{s}", .{out_buf[0..n]});
+}`)}
+<p><code>cwd()</code> is a directory handle for "wherever the process happens to be." Closing the special cwd handle is illegal. Long-running services that change the working directory or care about race resistance usually open a stable directory handle explicitly.</p>
+
+<h2>Reading and writing files</h2>
+${z(`// Read everything
+const data = try cwd.readFileAlloc(io, "input.txt", allocator, .limited(1 << 24));
+defer allocator.free(data);
+
+// Write everything
+try cwd.writeFile(io, .{ .sub_path = "output.txt", .data = "hello\\n" });
+
+// Stream
+const f = try cwd.createFile(io, "log.txt", .{});
+defer f.close(io);
+
+var write_buf: [4096]u8 = undefined;
+var writer = f.writer(io, &write_buf);
+defer writer.interface.flush() catch {};
+try writer.interface.print("line {}\\n", .{42});`)}
+
+<h2>Directory operations</h2>
+${z(`try cwd.createDir(io, "subdir", .default_dir);
+try cwd.createDirPath(io, "a/b/c");           // makes intermediate dirs
+
+var dir = try cwd.openDir(io, "subdir", .{ .iterate = true });
+defer dir.close(io);
+
+var it = dir.iterate();
+while (try it.next(io)) |entry| {
+    std.debug.print("{s} ({s})\\n", .{ entry.name, @tagName(entry.kind) });
+}
+
+try cwd.deleteFile(io, "temp.txt");
+try cwd.deleteDir(io, "empty_dir");
+try cwd.deleteTree(io, "path/to/wipe"); // recursive`)}
+<p>To iterate, open the directory with <code>.iterate = true</code>. The returned iterator yields <code>{name, kind}</code> entries.</p>
+
+<h2>Walking a tree</h2>
+<p>For recursive walks, use <code>walk</code>:</p>
+${z(`var dir = try cwd.openDir(io, ".", .{ .iterate = true });
+defer dir.close(io);
+
+var walker = try dir.walk(allocator);
+defer walker.deinit();
+
+while (try walker.next(io)) |entry| {
+    if (entry.kind == .file) {
+        std.debug.print("{s}\\n", .{entry.path});
+    }
+}`)}
+<p><code>walk</code> is convenience over <code>walkSelectively</code>. Use the selective walker when you need to prune directories like <code>zig-cache</code>, <code>.git</code>, or <code>node_modules</code> without descending into them.</p>
+
+<h2>Path helpers</h2>
+${z(`const p = try std.Io.Dir.path.join(allocator, &.{ "/etc", "nginx", "nginx.conf" });
+defer allocator.free(p);
+
+const dirname = std.Io.Dir.path.dirname(p);    // "/etc/nginx"
+const basename = std.Io.Dir.path.basename(p);  // "nginx.conf"
+const ext = std.Io.Dir.path.extension(p);      // ".conf"
+const stem = std.Io.Dir.path.stem(p);          // "nginx"
+
+const abs = try std.Io.Dir.path.resolve(allocator, &.{"./rel", "../sib"});
+defer allocator.free(abs);`)}
+<p><code>std.Io.Dir.path</code> handles platform-specific separators. Use it before hand-building paths with string concatenation.</p>
+
+<h2>Atomic and temporary files</h2>
+<p>For "write a config file, replace the old one only if write succeeded," create an atomic file, write to its real file handle, flush, then replace:</p>
+${z(`var atomic = try cwd.createFileAtomic(io, "config.toml", .{
+    .make_path = true,
+    .replace = true,
+});
+defer atomic.deinit(io);
+
+var buffer: [4096]u8 = undefined;
+var writer = atomic.file.writer(io, &buffer);
+try writer.interface.writeAll(new_contents);
+try writer.interface.flush();
+try atomic.replace(io);`)}
+
+<h2>Metadata</h2>
+${z(`const stat = try cwd.statFile(io, "data.txt", .{});
+std.debug.print("size = {} bytes\\n", .{stat.size});
+std.debug.print("mtime = {}\\n", .{stat.mtime});
+
+const f = try cwd.openFile(io, "data.txt", .{});
+defer f.close(io);
+const fst = try f.stat(io);
+_ = fst;`)}
+
+<h2>realpath, max_path_bytes</h2>
+${z(`var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+const n = try cwd.realPathFile(io, "rel/link", &buf);
+const real = buf[0..n];`)}
+<p><code>max_path_bytes</code> is the platform-appropriate maximum. Use it for stack path buffers; allocate when paths may be longer than the fixed buffer.</p>
+
+<h2>Working with file modes and permissions</h2>
+${z(`const script = try cwd.createFile(io, "script.sh", .{
+    .permissions = .executable_file,
+});
+defer script.close(io);
+
+try cwd.setFilePermissions(io, "script.sh", .executable_file, .{});`)}
+<p>On Windows, permissions map to file attributes; on POSIX they map to mode bits and are still affected by the process <code>umask</code>. Portable code should treat permissions as policy, not as a guaranteed exact final mode.</p>

@@ -1,0 +1,88 @@
+<p><code>std.mem</code> is the workhorse module for working with slices and raw bytes. It contains comparison, search, copy, split, join, byte-order conversion, alignment helpers, and a handful of allocator-related utilities. Get fluent in <code>std.mem</code> and your Zig code starts to flow.</p>
+
+<h2>Comparison and equality</h2>
+${z(`const a = "hello";
+const b = "world";
+const c = "hello";
+
+std.debug.assert(std.mem.eql(u8, a, c));         // byte-wise equal
+std.debug.assert(!std.mem.eql(u8, a, b));
+std.debug.assert(std.mem.order(u8, a, b) == .lt); // lexicographic compare
+
+std.debug.assert(std.mem.startsWith(u8, "hello world", "hello"));
+std.debug.assert(std.mem.endsWith(u8, "report.pdf", ".pdf"));`)}
+
+<h2>Search</h2>
+${note("Search returns optional indexes", "<p style=\"margin:0\"><code>find</code> and <code>findLast</code> return <code>?usize</code>. Treat \"not found\" as an ordinary optional case instead of using sentinel values like <code>-1</code>.</p>")}
+${z(`const text = "The quick brown fox";
+std.debug.assert(std.mem.find(u8, text, "quick") == 4);    // 0.16 spelling
+std.debug.assert(std.mem.findLast(u8, text, "o").? == 17);
+std.debug.assert(std.mem.findScalar(u8, text, 'q') == 4);  // single-byte fast path
+std.debug.assert(std.mem.containsAtLeast(u8, text, 1, "fox"));`)}
+
+<h2>Slicing helpers</h2>
+${z(`// trim leading/trailing bytes from a set
+const trimmed = std.mem.trim(u8, "  hello  ", " ");        // "hello"
+
+// split a slice on a separator — returns an iterator
+var it = std.mem.splitScalar(u8, "a,b,c", ',');
+while (it.next()) |part| std.debug.print("{s}\\n", .{part});
+
+// 0.16 additions
+const before, const after = std.mem.cut(u8, "key=value", "=").?;
+// before == "key", after == "value"
+
+const before2, const after2 = std.mem.cutScalar(u8, "key=value", '=').?;`)}
+<p>The <code>splitScalar</code> / <code>splitAny</code> / <code>splitSequence</code> trio handles the common splitting shapes. The 0.16 <code>cut</code> functions are perfect for "key=value" splitting, returning a tuple of optional parts.</p>
+
+<h2>Copy, move, set</h2>
+${z(`var dst: [16]u8 = undefined;
+@memcpy(dst[0..5], "hello");
+
+// std.mem.copyForwards / copyBackwards: for overlapping ranges
+std.mem.copyForwards(u8, dst[5..10], dst[0..5]);
+std.mem.copyBackwards(u8, dst[5..10], dst[0..5]);
+
+@memset(&dst, 0);                  // zero whole array
+std.mem.swap(u8, &dst[0], &dst[1]);
+std.mem.reverse(u8, &dst);
+std.mem.rotate(u8, &dst, 3);       // rotate left by 3`)}
+
+<h2>Byte order</h2>
+<p>Network protocols, file formats, and IPC use byte-order conversions constantly:</p>
+${z(`const x: u32 = 0xDEAD_BEEF;
+const be = std.mem.nativeToBig(u32, x);
+const le = std.mem.nativeToLittle(u32, x);
+const back = std.mem.bigToNative(u32, be);
+
+// reading from a slice with a specific endianness
+const v = std.mem.readInt(u32, bytes[0..4], .little);
+std.mem.writeInt(u32, bytes[0..4], 0x1234, .big);`)}
+
+<h2>Bytes as slices, slices as bytes</h2>
+${z(`var x: u64 = 0x12345678_DEADBEEF;
+const bytes = std.mem.asBytes(&x);       // []u8 view into x
+const bytes_const = std.mem.toBytes(x);  // [@sizeOf(u64)]u8 copy
+
+const arr: [4]u32 = .{1, 2, 3, 4};
+const flat: []const u8 = std.mem.sliceAsBytes(&arr);
+const back: []const u32 = std.mem.bytesAsSlice(u32, flat);`)}
+<p>These are zero-copy reinterpretations. Alignment matters — <code>bytesAsSlice</code> will panic in safe builds if the slice isn't aligned for the target type.</p>
+
+<h2>Allocators in std.mem</h2>
+<p>A few helpers ride along here:</p>
+${z(`const dup = try std.mem.Allocator.dupe(allocator, u8, "hello");
+defer allocator.free(dup);
+
+const joined = try std.mem.concat(allocator, u8, &.{ "foo", "/", "bar" });
+defer allocator.free(joined);
+
+const j2 = try std.mem.join(allocator, ", ", &.{ "a", "b", "c" });
+defer allocator.free(j2);`)}
+
+<h2>Iterators and tokenization</h2>
+<p>For real tokenization (whitespace, multiple delimiters), <code>std.mem.tokenize</code> family acts like <code>split</code> but skips empty results:</p>
+${z(`var it = std.mem.tokenizeAny(u8, "  hello   world  ", " ");
+while (it.next()) |word| std.debug.print("[{s}]\\n", .{word});
+// [hello] [world]`)}
+<p><code>splitX</code> yields empties between consecutive separators; <code>tokenizeX</code> skips them. Pick by whether empty fields are meaningful.</p>

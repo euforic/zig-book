@@ -1,0 +1,132 @@
+<p>Sometimes you need to run something at build time that isn't "compile a Zig file." You might want to generate code from a schema, embed an asset at a specific offset, run a linter, or shell out to <code>git</code> to embed a commit hash. The build system makes all of this composable.</p>
+
+<h2>Running an arbitrary command</h2>
+${z(`const generate = b.addSystemCommand(&.{
+    "python3", "scripts/codegen.py",
+});
+generate.addArg("--output");
+const generated = generate.addOutputFileArg("api.zig");
+
+// Use the generated file as a module
+const api_mod = b.createModule(.{
+    .root_source_file = generated,
+    .target = target,
+    .optimize = optimize,
+});
+root.addImport("api", api_mod);`)}
+
+<p><code>addSystemCommand</code> runs an external program. <code>addOutputFileArg</code> tells the build system "this argument will become a path; the program writes its output there; you should treat the result as a build artifact." Downstream steps can depend on the output.</p>
+
+<h2>Running another zig executable at build time</h2>
+${z(`const codegen_exe = b.addExecutable(.{
+    .name = "codegen",
+    .root_module = b.createModule(.{
+        .root_source_file = b.path("tools/codegen.zig"),
+        .target = b.graph.host, // run on the build machine
+        .optimize = .Debug,
+    }),
+});
+
+const run_codegen = b.addRunArtifact(codegen_exe);
+run_codegen.addArg("--schema");
+run_codegen.addFileArg(b.path("schema.json"));
+const out = run_codegen.addOutputFileArg("generated.zig");`)}
+
+<p>This is the canonical Zig pattern for code generation: write the generator in Zig itself, compile it for the <em>host</em>, and run it as a build step. The generator can depend on Zig modules, use comptime introspection, and produce typed output.</p>
+
+${note('<code>b.graph.host</code> refers to the machine running the build, regardless of what <code>-Dtarget</code> says for the main artifacts. This is crucial: you want code generators to run natively, not under wasm or in a cross-compile context.')}
+
+<h2>Embedding files</h2>
+${z(`// In build.zig:
+exe.root_module.addAnonymousImport("assets/logo.png", .{
+    .root_source_file = b.path("assets/logo.png"),
+});
+
+// Or use @embedFile in source:
+const logo = @embedFile("../assets/logo.png");`)}
+
+<p><code>@embedFile</code> reads a file at compile time and returns its contents as a <code>[]const u8</code>. The data lives in your binary's read-only section. Good for small-to-medium assets (icons, default config, fixture data). For very large assets, ship them separately or compress at build time.</p>
+
+<h2>Generated Zig source</h2>
+<p>Generated code should still enter the build graph as a file artifact. That makes dependency order explicit and keeps rebuilds deterministic.</p>
+${z(`const write_files = b.addWriteFiles();
+const generated = write_files.add("generated/config.zig",
+    \\\\pub const app_name = "demo";
+    \\\\pub const default_port: u16 = 8080;
+);
+
+const config_mod = b.createModule(.{
+    .root_source_file = generated,
+    .target = target,
+    .optimize = optimize,
+});
+root.addImport("generated_config", config_mod);`)}
+
+<p>This pattern is good for simple generated constants. For larger schemas, use a real generator executable as shown above.</p>
+
+<h2>Embedding a git hash</h2>
+${z(`const git_hash = b.run(&.{ "git", "rev-parse", "--short", "HEAD" });
+const trimmed = std.mem.trim(u8, git_hash, &std.ascii.whitespace);
+
+const options = b.addOptions();
+options.addOption([]const u8, "git_hash", trimmed);
+root.addOptions("build_info", options);`)}
+
+<p>In source: <code>const info = @import("build_info"); std.debug.print("commit {s}\\\\n", .{info.git_hash});</code>.</p>
+
+<h2>Custom step types</h2>
+<p>For complex one-off logic, you can implement a custom step by subclassing <code>std.Build.Step</code>:</p>
+
+${z(`const LintStep = struct {
+    step: std.Build.Step,
+    files: []const std.Build.LazyPath,
+
+    fn create(b: *std.Build, files: []const std.Build.LazyPath) *LintStep {
+        const self = b.allocator.create(LintStep) catch @panic("OOM");
+        self.* = .{
+            .step = std.Build.Step.init(.{
+                .id = .custom,
+                .name = "lint",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .files = files,
+        };
+        return self;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        _ = options;
+        const self: *LintStep = @fieldParentPtr("step", step);
+        for (self.files) |path| {
+            const real_path = path.getPath2(step.owner, step);
+            // run linter on real_path...
+            std.log.info("linting {s}", .{real_path});
+        }
+    }
+};`)}
+
+<p>This is more code, but you get to participate in the build graph as a first-class citizen: caching, parallelism, dependency tracking. Reach for it when <code>addSystemCommand</code> isn't expressive enough.</p>
+
+<h2>Test integration: unit-test timeouts</h2>
+<p>Per-test timeouts keep long-running or stuck tests from hanging CI indefinitely:</p>
+
+${z(`const tests = b.addTest(.{
+    .root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    }),
+});
+
+const run_tests = b.addRunArtifact(tests);
+run_tests.timeout_ms = 30_000; // 30 seconds per test process
+
+const test_step = b.step("test", "Run unit tests");
+test_step.dependOn(&run_tests.step);`)}
+
+<h2>Try it: build-time asset check</h2>
+<p>Add an <code>assets/default.json</code> file to a project, embed it with <code>@embedFile</code>, and write a test that parses it. Then add a <code>zig build check-assets</code> step that runs only that test artifact.</p>
+<p>This is a practical pattern: if your binary ships default templates, schemas, database update files, or certificates, the build should prove they are readable before release.</p>
+
+${tip('Use <code>--verbose</code> with <code>zig build</code> to see each step the build is executing. Combined with <code>--time-report</code>, it makes diagnosing slow builds straightforward.')}

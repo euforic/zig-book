@@ -1,0 +1,75 @@
+<p>Switch statements are usually fine. But when you're writing an interpreter, a state machine, or a tokenizer that loops on a switch every iteration, the compiler often can't see that "after handling this instruction, jump back to the top and switch on the next" is the actual hot path. Labeled switch — which Zig grew in 0.13 and which is now mature — lets you express direct jumps between switch arms, giving you a manual computed-goto without leaving safe Zig.</p>
+
+<h2>The basic syntax</h2>
+<p>You label a switch with <code>label:</code> and then jump to it from inside an arm with <code>continue :label expr</code>:</p>
+${z(`fn interpret(bytecode: []const u8) void {
+    var pc: usize = 0;
+    sw: switch (bytecode[pc]) {
+        OP_ADD => {
+            // ... do add ...
+            pc += 1;
+            continue :sw bytecode[pc];
+        },
+        OP_SUB => {
+            // ... do sub ...
+            pc += 1;
+            continue :sw bytecode[pc];
+        },
+        OP_HALT => return,
+        else => unreachable,
+    }
+}`)}
+<p>Each <code>continue :sw expr</code> jumps directly to the switch with a new value, without going through a back-edge of a surrounding loop. The compiler emits a separate dispatch per arm — better branch prediction, fewer indirect jumps.</p>
+
+<h2>Why this matters</h2>
+<p>Modern CPUs predict indirect branches based on the call site. If every iteration of your interpreter loops through the same outer <code>while</code>, there's one indirect branch at the top, and the predictor can only learn one pattern: "next instruction comes from anywhere." With labeled switch and per-arm dispatch, each arm has its <em>own</em> indirect branch, and the predictor learns transitions: "after ADD, the next instruction is often LOAD."</p>
+
+<p>For real interpreters this is typically a 10–30% speedup over the naive loop-around-switch, with no change in semantics.</p>
+
+<h2>State machines</h2>
+<p>The same trick applies to lexers and parsers. Each state is a switch arm; transitions are <code>continue :sw next_state</code>:</p>
+${z(`fn lex(input: []const u8) Token {
+    var i: usize = 0;
+    var state: State = .start;
+    sw: switch (state) {
+        .start => {
+            if (i == input.len) return .eof;
+            const c = input[i];
+            i += 1;
+            switch (c) {
+                ' ', '\\t' => continue :sw .start,
+                'a'...'z', 'A'...'Z' => continue :sw .ident,
+                '0'...'9' => continue :sw .number,
+                else => return .err,
+            }
+        },
+        .ident => {
+            // ... read ident chars ...
+            return .ident;
+        },
+        .number => {
+            // ... read digits ...
+            return .number;
+        },
+    }
+}`)}
+<p>Compared to a hand-coded computed goto in C, this is type-safe, exhaustive (the compiler still warns about missing arms), and integrated with regular Zig control flow.</p>
+
+<h2>Mixing with continue / break of outer loops</h2>
+<p>Labeled <code>continue</code> and <code>break</code> work as you'd expect when there are nested constructs. You can <code>break :sw value</code> to exit the switch with a value (like a labeled block) instead of jumping arms:</p>
+${z(`const result = sw: switch (initial_state) {
+    .a => continue :sw .b,
+    .b => continue :sw .c,
+    .c => break :sw 42,
+};`)}
+<p>This makes a switch into both a dispatch table and a value-producing expression, depending on the arm.</p>
+
+<h2>When to use labeled switch</h2>
+<ul>
+  <li>You are writing an interpreter, regex engine, or other hot dispatch loop.</li>
+  <li>You have a state machine with frequent transitions between states.</li>
+  <li>Profiling shows the indirect branch on your outer loop is a hot misprediction site.</li>
+</ul>
+<p>For ordinary code — a few-dozen-arm switch you hit once per request — a regular switch is fine and clearer. The performance benefit is real but specific.</p>
+
+${tip("Inspect the codegen", "<p style=\"margin:0\">If you're using labeled switch for performance, look at the generated assembly with <code>zig build-exe --verbose-cc</code> or compile-explorer. You're looking for one indirect jump per arm rather than one for the whole switch. If you don't see that, the compiler might have inlined back to the loop form — adjust your structure until it sticks.</p>")}

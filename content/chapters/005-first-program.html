@@ -1,0 +1,111 @@
+<p>Let's create a real project, run it, and dissect everything that happens. This is the shape every Zig project takes — single-file experiments to multi-million-line codebases all start here.</p>
+
+<h2>Scaffolding</h2>
+<p>Zig will generate a starter project for you:</p>
+${sh(`$ mkdir hello && cd hello
+$ zig init
+info: created build.zig
+info: created build.zig.zon
+info: created src/main.zig
+info: created src/root.zig
+info: see 'zig build --help' for a menu of options`)}
+<p>You get four files:</p>
+<ul>
+  <li><code>build.zig</code> — the build script. Written in Zig, executed by <code>zig build</code>.</li>
+  <li><code>build.zig.zon</code> — the manifest (name, version, dependencies, minimum Zig version).</li>
+  <li><code>src/main.zig</code> — entry point for the executable.</li>
+  <li><code>src/root.zig</code> — entry point for the library (you can ignore or delete it for now).</li>
+</ul>
+
+<h2>main.zig, simplified</h2>
+<p>The generated <code>src/main.zig</code> is a bit busy. Replace it with this minimal version while we learn:</p>
+${z(`const std = @import("std");
+
+pub fn main() void {
+    std.debug.print("Hello, Zig!\\n", .{});
+}`)}
+
+<h2>Build and run</h2>
+${sh(`$ zig build run
+Hello, Zig!`)}
+<p>That command did two things. It compiled <code>src/main.zig</code> into an executable under <code>zig-out/bin/</code>, then ran it. If you just want the binary without running it:</p>
+${sh(`$ zig build
+$ ./zig-out/bin/hello
+Hello, Zig!`)}
+
+<h2>Anatomy of every line</h2>
+<p>Now the autopsy. Each token in those four lines is doing real work.</p>
+
+<h3><code>const std = @import("std");</code></h3>
+<p><code>const</code> declares an immutable binding. Zig requires <code>const</code> or <code>var</code> on every declaration — there is no implicit <code>let</code>. The right-hand side is a compile-time expression.</p>
+<p><code>@import</code> is a <em>builtin</em>: a compiler-provided function whose name starts with <code>@</code>. Builtins do things the language proper can't — query types, emit intrinsics, talk to the build system. <code>@import("std")</code> returns the standard library's root namespace as a value of type <code>type</code>. We bind that value to the name <code>std</code>.</p>
+<p>This is not a special "import statement." It is an ordinary <code>const</code> declaration whose value happens to be a module. You could write <code>const fs = @import("std").fs;</code> and access <code>fs.File</code> directly.</p>
+
+<h3><code>pub fn main() void {</code></h3>
+<p><code>pub</code> makes the function visible to other modules — including, importantly, the build system's startup code that calls it. Without <code>pub</code>, the symbol would be private to this file and you'd get a link error.</p>
+<p><code>fn</code> introduces a function. <code>main</code> is the conventional entry point. The parentheses hold the parameter list (empty here). <code>void</code> is the return type: this function returns no value.</p>
+<p>You can also declare <code>main</code> with a return type of <code>!void</code> if it might fail (we'll meet error unions in Part V), or <code>u8</code> to return an exit code. <code>void</code> means "succeeded silently."</p>
+
+<h3><code>std.debug.print("Hello, Zig!\\n", .{});</code></h3>
+<p><code>std.debug.print</code> is a function — specifically, <code>std.debug.print</code> writes to standard error, never buffers, and is intended for debugging only. (Real output uses <code>std.Io</code>, which we'll cover in Part IX.) It takes two arguments: a <em>format string</em> and a <em>tuple of arguments</em>.</p>
+<p>The <code>"Hello, Zig!\\n"</code> is a string literal, a slice of <code>const u8</code> with a sentinel zero. The <code>\\n</code> is an escaped newline.</p>
+<p><code>.{}</code> is an anonymous empty struct literal — Zig's notation for a tuple with no fields. If we wanted to interpolate, we'd write something like:</p>
+${z(`std.debug.print("answer = {}\\n", .{42});`)}
+<p>The format string and the arguments are checked at compile time. Pass the wrong number or the wrong types and your build fails before a binary exists.</p>
+
+<h2>Looking at the build script</h2>
+<p>Open <code>build.zig</code> (we won't go deep here — Part X is dedicated to it):</p>
+${z(`const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const exe = b.addExecutable(.{
+        .name = "hello",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    b.installArtifact(exe);
+
+    const run_step = b.step("run", "Run the app");
+    const run_cmd = b.addRunArtifact(exe);
+    run_step.dependOn(&run_cmd.step);
+}`)}
+<p>That's a Zig program that builds a Zig program. It declares an executable named <code>hello</code> rooted at <code>src/main.zig</code>, installs it to <code>zig-out</code>, and defines a custom <code>run</code> step. There is no separate build language; <code>build.zig</code> is real Zig with access to the standard library.</p>
+
+<h2>Build modes</h2>
+<p>Try compiling with different optimization profiles:</p>
+${sh(`$ zig build -Doptimize=Debug        # default; safety checks on, no opt
+$ zig build -Doptimize=ReleaseSafe    # opt + safety checks
+$ zig build -Doptimize=ReleaseFast    # opt, safety checks off
+$ zig build -Doptimize=ReleaseSmall   # opt for size`)}
+<p>Zig has four optimization profiles. <code>Debug</code> is the default; it gives you the fastest builds and the loudest safety checks. <code>ReleaseSafe</code> keeps the safety checks — overflow, bounds, null deref — while still optimizing. <code>ReleaseFast</code> drops them. <code>ReleaseSmall</code> optimizes for binary size. Pick deliberately.</p>
+
+<h2>What just happened, conceptually</h2>
+<p>You wrote a function in a language that has no runtime. The build script told the compiler to produce a static binary. The binary statically linked Zig's standard library (no shared libs are needed unless you ask for libc), called your <code>main</code>, wrote some bytes to file descriptor 2, and exited with status 0. That is the entire shape of a Zig program.</p>
+
+<h2>Try it: make the compiler teach you</h2>
+<p>Before moving on, make three intentional mistakes and read the diagnostics:</p>
+<ol>
+  <li>Remove <code>pub</code> from <code>main</code> and run <code>zig build run</code>.</li>
+  <li>Change the format string to <code>"answer = {} {}\\n"</code> but keep only one argument.</li>
+  <li>Change <code>const std</code> to <code>var std</code> and notice how Zig treats mutable compile-time bindings.</li>
+</ol>
+<p>Then restore the working version and add a tiny test file:</p>
+${z(`const std = @import("std");
+
+pub fn meaning() u8 {
+    return 42;
+}
+
+test "meaning is stable" {
+    try std.testing.expectEqual(@as(u8, 42), meaning());
+}`)}
+${sh(`zig test src/main.zig`)}
+
+<p>Next: the philosophy that makes Zig look the way it does.</p>

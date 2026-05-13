@@ -1,0 +1,68 @@
+<p>Zig is not memory-safe in the way Rust is — there's no borrow checker, and the type system doesn't prevent every misuse of pointers. What Zig <em>does</em> have is a comprehensive runtime safety story in debug builds: most memory bugs panic with a clear message instead of corrupting your program silently. Combined with the GPA's leak detector, this catches a remarkable fraction of bugs in practice.</p>
+
+<h2>Build modes and safety</h2>
+<p>Zig has four build modes, each with a different tradeoff:</p>
+<ul>
+  <li><strong>Debug</strong> — every safety check enabled, no optimization. Default for <code>zig build</code>.</li>
+  <li><strong>ReleaseSafe</strong> — optimizations on, runtime safety checks <em>kept</em>.</li>
+  <li><strong>ReleaseFast</strong> — optimizations on, safety checks off. UB on the slip.</li>
+  <li><strong>ReleaseSmall</strong> — like ReleaseFast but tuned for binary size.</li>
+</ul>
+<p>Most production code should default to <strong>ReleaseSafe</strong>. The performance gap to ReleaseFast is usually small; the safety gap is enormous.</p>
+
+<h2>What safety checks catch</h2>
+<p>In safe builds, the runtime catches:</p>
+<ul>
+  <li>Integer overflow on <code>+</code>, <code>-</code>, <code>*</code> (use <code>+%</code>/<code>-%</code>/<code>*%</code> to wrap).</li>
+  <li>Division by zero, integer remainder by zero.</li>
+  <li>Out-of-bounds slice/array indexing.</li>
+  <li>Out-of-bounds slice creation (<code>arr[5..2]</code>, <code>arr[0..arr.len+1]</code>).</li>
+  <li>Reaching <code>unreachable</code>.</li>
+  <li>Cast that doesn't fit (<code>@intCast</code> losing bits, <code>@enumFromInt</code> with unknown value).</li>
+  <li>Dereferencing <code>null</code> in an unwrapped optional (<code>optional.?</code> on null).</li>
+  <li>Use-after-free of GPA allocations (in safe modes; GPA pads and quarantines).</li>
+  <li>Double-free of GPA allocations.</li>
+  <li>Many alignment violations on pointer casts.</li>
+</ul>
+<p>Each violation panics with a return trace pointing at the failing operation. No silent corruption.</p>
+
+<h2>What safety checks miss</h2>
+<p>The checks are not exhaustive. Notably:</p>
+<ul>
+  <li>Dangling pointers to <em>stack</em> memory after the stack frame returns. Returning <code>&local</code> compiles and may not crash until much later.</li>
+  <li>Iterator invalidation: appending to a slice you're iterating over may relocate the backing buffer; the iterator is now garbage.</li>
+  <li>Data races between threads (Zig has atomics, but no race detector).</li>
+  <li>Aliasing of mutable references — possible to have two <code>*T</code>s into the same memory.</li>
+</ul>
+<p>None of these are common with disciplined Zig style — but they're not <em>compiler-prevented</em>. The borrow checker shaped hole has to be filled by the programmer.</p>
+
+<h2>undefined as a debug trap</h2>
+<p>Assigning <code>undefined</code> to a variable doesn't make it null or zero — in safe builds, it fills the memory with <code>0xAA</code> bytes. Reading from it before writing produces obvious garbage, which is much louder than silent zero-init bugs.</p>
+${z(`var x: u32 = undefined;
+std.debug.print("{x}\\n", .{x}); // safe: prints aaaaaaaa, suspicious
+                                  // fast: prints whatever was there`)}
+
+<h2>GPA's special powers</h2>
+<p>The GeneralPurposeAllocator is much more than a heap. It:</p>
+<ul>
+  <li>Tracks every live allocation with a stack trace of its creation site.</li>
+  <li>Tracks every freed allocation with a stack trace of its free site.</li>
+  <li>Pads allocations and detects writes past the end.</li>
+  <li>Detects double-free and use-after-free against its records.</li>
+  <li>Reports any leaks at <code>deinit()</code> with stack traces of where the leaked memory was allocated.</li>
+</ul>
+<p>Run your tests under GPA (or testing allocator, which is GPA) and most memory bugs become visible the moment they happen, with full context.</p>
+
+${danger("ReleaseFast removes all of this", "<p style=\"margin:0\">In <code>-Doptimize=ReleaseFast</code>, every safety check becomes undefined behavior. The same code that panics nicely in debug can corrupt arbitrary memory in release. Profile first; only drop to ReleaseFast if you have measurements showing it matters. Most code should ship as ReleaseSafe.</p>")}
+
+<h2>Defensive habits</h2>
+<p>Beyond what the compiler does for you:</p>
+<ul>
+  <li>Pair every <code>alloc</code>/<code>create</code> with a <code>defer free</code>/<code>destroy</code> on the next line.</li>
+  <li>Pair every <code>init</code> with a <code>defer deinit</code>.</li>
+  <li>Use <code>errdefer</code> when a partially constructed object needs to be torn down on failure.</li>
+  <li>Prefer slices to many-pointers; the length information catches off-by-one bugs.</li>
+  <li>Prefer optionals to "sentinel pointer" tricks; the type system catches missed null checks.</li>
+  <li>Keep functions short. Long functions with many allocations are where leaks hide.</li>
+</ul>
+<p>These habits compound. A codebase that lives by them tends to be near-leak-free by construction, not by audit.</p>

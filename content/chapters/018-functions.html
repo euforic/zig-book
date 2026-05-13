@@ -1,0 +1,112 @@
+<p>Functions in Zig are about as plain as functions can be. They take parameters by value, return a single value, and have no special "method" or "constructor" syntax. What makes them interesting is what their parameters can be — <code>comptime</code> values, types, and so on — and that they are first-class values you can pass around.</p>
+
+<h2>Declaration</h2>
+${z(`fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+
+pub fn greet(name: []const u8) void {
+    std.debug.print("Hello, {s}!\\n", .{name});
+}`)}
+<p>The keyword is <code>fn</code>. Parameters list types after their names. The return type comes after the closing paren. <code>pub</code> exports; without it the function is file-local.</p>
+
+<h2>Parameters are immutable</h2>
+<p>Function parameters are like <code>const</code> bindings: you can't reassign them inside the function body.</p>
+${z(`fn double(x: i32) i32 {
+    // x = x * 2; // error
+    return x * 2;
+}`)}
+<p>If you want a mutable local, copy it:</p>
+${z(`fn factorial(n: u32) u32 {
+    var x = n;
+    var result: u32 = 1;
+    while (x > 1) : (x -= 1) result *= x;
+    return result;
+}`)}
+
+<h2>Pass by value, mostly</h2>
+<p>Small values (integers, small structs) are passed in registers. Large values are passed by hidden reference for efficiency, but you can't observe the difference: the parameter is conceptually a copy and the caller's value is unaffected.</p>
+<p>If you need to mutate caller state, pass a pointer:</p>
+${z(`fn increment(p: *u32) void {
+    p.* += 1;
+}
+
+var n: u32 = 5;
+increment(&n);
+// n is 6`)}
+
+<h2>Multiple return values</h2>
+<p>Zig has no tuple syntax for multiple returns at the language level; you return a struct (named or anonymous):</p>
+${z(`fn divmod(a: u32, b: u32) struct { q: u32, r: u32 } {
+    return .{ .q = a / b, .r = a % b };
+}
+
+const result = divmod(17, 5);
+std.debug.print("{} {}\\n", .{ result.q, result.r }); // 3 2`)}
+
+<h2>Functions as values</h2>
+<p>Functions are values of pointer type. You can put them in variables, pass them as parameters, store them in struct fields:</p>
+${z(`fn apply(f: *const fn (i32) i32, x: i32) i32 {
+    return f(x);
+}
+
+fn square(x: i32) i32 { return x * x; }
+
+const y = apply(square, 5); // 25`)}
+<p>The type <code>*const fn (i32) i32</code> reads "const pointer to a function taking i32 and returning i32." The <code>*const</code> part is mandatory; Zig has no bare function-value type the way C does. In practice you don't see it often because most function values flow through generic parameters or are used directly.</p>
+
+<h2>Anonymous functions are not a thing</h2>
+<p>Zig has no closures and no lambda syntax. If you need a small function-like construct, you can define a local <code>fn</code> as a static member of a struct literal, but it has no access to enclosing locals.</p>
+${z(`const helpers = struct {
+    fn lessThan(a: u32, b: u32) bool { return a < b; }
+};
+
+std.mem.sort(u32, &items, {}, helpers.lessThan);`)}
+
+<h2>Variadic functions</h2>
+<p>Zig has no traditional varargs. The standard pattern is "a tuple of anytypes" passed as a single value:</p>
+${z(`fn printAll(args: anytype) void {
+    inline for (args) |arg| {
+        std.debug.print("{any} ", .{arg});
+    }
+}
+
+printAll(.{ 1, "hello", 3.14, true });`)}
+<p>The compiler expands the body for each call site, so this is zero-cost at runtime — and type-safe.</p>
+
+<h2>Comptime parameters</h2>
+<p>A parameter declared <code>comptime</code> must be known at compile time. This is how generics are written:</p>
+${z(`fn max(comptime T: type, a: T, b: T) T {
+    return if (a > b) a else b;
+}
+
+const m = max(i32, 3, 7);     // 7
+const mf = max(f64, 1.0, 2.5); // 2.5`)}
+<p>Each instantiation produces specialized code. We dive deep into this in Part VII.</p>
+
+<h2>inline and noinline</h2>
+<p>Functions can be marked <code>inline</code> or <code>noinline</code> to advise the compiler. <code>inline fn</code> also affects semantics: calls become <code>inline</code> calls, comptime context can flow through, and the function can't be taken as a value.</p>
+${z(`inline fn square(x: i32) i32 { return x * x; }`)}
+<p>Use sparingly. The compiler is good at inlining on its own.</p>
+
+<h2>Return types you'll meet often</h2>
+<ul>
+  <li><code>void</code> — no return value (implicit at end).</li>
+  <li><code>T</code> — a normal value.</li>
+  <li><code>!T</code> — error union, see Part V.</li>
+  <li><code>?T</code> — optional, see Chapter 20.</li>
+  <li><code>noreturn</code> — never returns, see Chapter 8.</li>
+</ul>
+
+<h2>extern, export, and callconv</h2>
+<p>Three attributes you'll need when interoperating with C:</p>
+<ul>
+  <li><code>extern fn</code> — declared in Zig, defined elsewhere (linked from a C library).</li>
+  <li><code>export fn</code> — defined in Zig, made visible with C linkage so others can link it.</li>
+  <li><code>callconv(.c)</code> — use the C calling convention instead of Zig's. Required for <code>extern</code>/<code>export</code> entry points.</li>
+</ul>
+${z(`pub extern "c" fn malloc(n: usize) ?*anyopaque;
+pub export fn add_ints(a: c_int, b: c_int) callconv(.c) c_int {
+    return a + b;
+}`)}
+<p>We'll come back to this in Part XI.</p>

@@ -1,0 +1,96 @@
+<p><code>std.crypto</code> is one of the standard library's gems. Zig ships a curated set of modern cryptographic primitives — hashes, MACs, AEADs, signature schemes, key-agreement, KDFs — all implemented in pure Zig, all constant-time, all suitable for production. No need to pull in OpenSSL or libsodium for the common cases.</p>
+
+<h2>Hashing</h2>
+${z(`const std = @import("std");
+
+pub fn main() void {
+    var sha = std.crypto.hash.sha2.Sha256.init(.{});
+    sha.update("hello, ");
+    sha.update("world");
+    var digest: [32]u8 = undefined;
+    sha.final(&digest);
+    std.debug.print("{x}\\n", .{std.fmt.fmtSliceHexLower(&digest)});
+}`)}
+<p>The hash API is consistent: <code>init</code>, <code>update</code> any number of times, <code>final</code> into a buffer. Available algorithms: SHA-1, SHA-2 (224/256/384/512), SHA-3 (224/256/384/512), Blake2b, Blake2s, Blake3.</p>
+
+<h2>One-shot hashes</h2>
+${z(`var out: [32]u8 = undefined;
+std.crypto.hash.sha2.Sha256.hash("the message", &out, .{});`)}
+<p>For when you have the whole input in memory and don't need streaming.</p>
+
+<h2>MACs</h2>
+${z(`var mac: [32]u8 = undefined;
+std.crypto.auth.hmac.sha2.HmacSha256.create(&mac, "data", "secret key");
+
+const verified = std.mem.eql(u8, &mac, &expected_mac); // use timingSafeEql for security`)}
+<p><strong>Always</strong> compare MACs and signatures with <code>std.crypto.utils.timingSafeEql</code>, not with <code>std.mem.eql</code>. The former takes constant time; the latter short-circuits and can leak the prefix.</p>
+
+<h2>Authenticated encryption (AEAD)</h2>
+${z(`const Aes256Gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+
+var key: [Aes256Gcm.key_length]u8 = undefined;
+io.random(&key);
+
+var nonce: [Aes256Gcm.nonce_length]u8 = undefined;
+io.random(&nonce);
+
+const plaintext = "secret message";
+var ciphertext: [plaintext.len]u8 = undefined;
+var tag: [Aes256Gcm.tag_length]u8 = undefined;
+
+Aes256Gcm.encrypt(&ciphertext, &tag, plaintext, "associated data", nonce, key);
+
+var recovered: [plaintext.len]u8 = undefined;
+try Aes256Gcm.decrypt(&recovered, &ciphertext, tag, "associated data", nonce, key);`)}
+<p>The AEAD shape is the same for every cipher: encrypt and decrypt take separate buffers for plaintext, ciphertext, and tag, plus AAD, nonce, and key.</p>
+
+${note("Modern AEAD choices", "<p style=\"margin:0\"><code>std.crypto.aead</code> includes <strong>AES-SIV</strong> (deterministic, nonce-misuse-resistant), <strong>AES-GCM-SIV</strong> (the SIV-AES hybrid from RFC 8452), and <strong>Ascon-AEAD</strong> (the NIST lightweight crypto winner — small code, ideal for embedded targets). The corresponding hash, Ascon-Hash, is available in <code>std.crypto.hash</code>.</p>")}
+
+<h2>Available AEADs</h2>
+<ul>
+  <li><code>aes_gcm</code> — AES-128/256-GCM. Industry standard.</li>
+  <li><code>aes_siv</code> — AES-SIV. Nonce-misuse-resistant.</li>
+  <li><code>aes_gcm_siv</code> — AES-GCM-SIV. The SIV variant of GCM.</li>
+  <li><code>chacha_poly</code> — ChaCha20-Poly1305 and XChaCha20-Poly1305. Software-friendly.</li>
+  <li><code>ascon</code> — Ascon-AEAD. Lightweight for embedded.</li>
+</ul>
+
+<h2>Key derivation</h2>
+${z(`var key: [32]u8 = undefined;
+try std.crypto.pwhash.argon2.kdf(allocator, &key, "password", "salt12345678", .{
+    .t = 3, .m = 65536, .p = 1,
+}, .argon2id);`)}
+<p>For password hashing, Argon2 is the default. <code>scrypt</code> and <code>pbkdf2</code> are also available for compatibility.</p>
+
+<h2>Signatures and key exchange</h2>
+${z(`// Ed25519
+const kp = std.crypto.sign.Ed25519.KeyPair.create(null) catch unreachable;
+const sig = try kp.sign("message", null);
+try sig.verify("message", kp.public_key);
+
+// X25519
+const a_kp = std.crypto.dh.X25519.KeyPair.create(null) catch unreachable;
+const b_kp = std.crypto.dh.X25519.KeyPair.create(null) catch unreachable;
+const shared_a = try std.crypto.dh.X25519.scalarmult(a_kp.secret_key, b_kp.public_key);
+const shared_b = try std.crypto.dh.X25519.scalarmult(b_kp.secret_key, a_kp.public_key);
+// shared_a == shared_b`)}
+<p>Ed25519, ECDSA over secp256r1/k1, and X25519 cover the public-key needs for most applications. Post-quantum primitives (ML-KEM, ML-DSA) are being added as their standards stabilize.</p>
+
+<h2>Random</h2>
+${z(`var buf: [32]u8 = undefined;
+io.random(&buf);
+try io.randomSecure(&buf);
+
+const io_source: std.Random.IoSource = .{ .io = io };
+const crypto_rng = io_source.interface();
+const r = crypto_rng.int(u64);
+
+var prng = std.Random.DefaultPrng.init(0x1234_5678);
+const deterministic_rng = prng.random();
+const f = deterministic_rng.float(f64);`)}
+<p><code>io.random</code> fills bytes from the selected I/O implementation and may use process-local RNG state. <code>io.randomSecure</code> asks outside the process for fresh cryptographic entropy. For deterministic simulations, tests, and games, use <code>std.Random</code> PRNGs with an explicit seed.</p>
+
+${danger("Don't roll your own", "<p style=\"margin:0\">If you find yourself reaching for raw block ciphers, manual padding, or ad-hoc protocols, stop and use a higher-level primitive. AES-GCM-SIV, ChaCha20-Poly1305, and Ed25519 are correct by construction; AES-ECB and \"encrypt then HMAC by hand\" are not. The stdlib makes the right thing the easy thing — use it.</p>")}
+
+<h2>TLS</h2>
+<p><code>std.crypto.tls</code> contains a TLS 1.3 implementation used by <code>std.http.Client</code>. It is not yet a general-purpose TLS library suitable for arbitrary clients and servers — that's a known roadmap item. For now, if you need TLS outside HTTP, use a bound library.</p>

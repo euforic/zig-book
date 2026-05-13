@@ -1,0 +1,15 @@
+.{
+    .name = .zig_book,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "AGENTS.md",
+        "build.zig",
+        "build.zig.zon",
+        "content",
+        "index.html",
+        "skills",
+        "src",
+    },
+    .fingerprint = 0x38f40d22b067adb,
+}

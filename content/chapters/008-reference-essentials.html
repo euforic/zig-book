@@ -1,0 +1,133 @@
+<p>The language reference is complete, but it is intentionally dense. This chapter covers the reference topics beginners tend to miss because they are small, formal, or scattered across many sections.</p>
+
+<h2>Comments and documentation</h2>
+<p>Zig has line comments only. A normal comment starts with <code>//</code>. A doc comment starts with <code>///</code> and documents the declaration immediately after it. A top-level doc comment starts with <code>//!</code> and documents the enclosing container, usually the file.</p>
+${z(`//! Module-level docs for this file.
+
+/// Adds two unsigned integers.
+pub fn add(a: u32, b: u32) u32 {
+    // Ordinary implementation note.
+    return a + b;
+}`)}
+
+<p>There are no block comments. This keeps the tokenizer simple and prevents accidentally commenting out half a file in a way that changes nested code.</p>
+
+<h2>Identifiers and string names</h2>
+<p>Normal identifiers use letters, digits, and underscores, and cannot be keywords. When you need a symbol that is not a normal identifier, use <code>@"..."</code>. This is common for C symbols, exported names, tests, or interop with systems that use names Zig would not normally accept.</p>
+${z(`export fn @"add-one"(x: i32) i32 {
+    return x + 1;
+}
+
+const @"type" = 42; // legal, but usually a bad idea in ordinary code`)}
+
+${tip("Use escaped identifiers at boundaries", `<p style="margin:0">Inside normal Zig code, prefer ordinary names. Use <code>@\"...\"</code> when the outside world forces a spelling: C ABI symbols, generated code, protocol fields, or tests with human-readable names.</p>`)}
+
+<h2>Operators and precedence</h2>
+<p>Zig has no operator overloading. If you see <code>+</code>, it is built-in arithmetic; it never calls user code. The reference's operator table matters because similar-looking operators often carry different safety promises.</p>
+<ul>
+  <li><code>+</code>, <code>-</code>, <code>*</code> trap on integer overflow in safe modes.</li>
+  <li><code>+%</code>, <code>-%</code>, <code>*%</code> wrap in twos-complement arithmetic.</li>
+  <li><code>+|</code>, <code>-|</code>, <code>*|</code> saturate at the type's min or max.</li>
+  <li><code>and</code>, <code>or</code>, <code>orelse</code>, and <code>catch</code> short-circuit.</li>
+  <li><code>++</code> concatenates arrays at compile time; <code>**</code> repeats arrays at compile time.</li>
+</ul>
+
+<p>When an expression is hard to read, use parentheses. Zig rewards explicit code more than clever precedence games.</p>
+
+<h2>Destructuring</h2>
+<p>Tuples, arrays, and vectors can be destructured into declarations. Use <code>_</code> to discard a position.</p>
+${z(`const point = .{ 10, 20 };
+const x, const y = point;
+
+const rgb = [_]u8{ 255, 128, 0 };
+const red, _, const blue = rgb;`)}
+
+<p>Destructuring is best for small, obvious groupings. If the values have names that matter, a struct is usually clearer.</p>
+
+<h2>Opaque types</h2>
+<p><code>opaque {}</code> declares a distinct type whose size and layout are unknown to Zig code. You normally hold it through a pointer. It is the right tool for handle-based C APIs and type-erased boundaries where consumers must not inspect internals.</p>
+${z(`const sqlite3 = opaque {};
+
+extern fn sqlite3_close(db: *sqlite3) c_int;
+
+pub fn closeDatabase(db: *sqlite3) void {
+    _ = sqlite3_close(db);
+}`)}
+
+<p><code>void</code> is a zero-bit type with known size. <code>anyopaque</code> is an unknown non-zero type used for type-erased pointers. They are not interchangeable.</p>
+
+<h2>Zero-bit types</h2>
+<p>Some types carry information in the type system while occupying no runtime storage. <code>void</code>, empty structs, and enums with one tag can all be zero-bit. This is useful for maps-as-sets, marker values, and generic code that sometimes needs no payload.</p>
+${z(`const Marker = struct {};
+const Mode = enum { fast };
+
+comptime {
+    std.debug.assert(@sizeOf(void) == 0);
+    std.debug.assert(@sizeOf(Marker) == 0);
+    std.debug.assert(@sizeOf(Mode) == 0);
+}`)}
+
+<h2>Type coercion, casts, and peers</h2>
+<p>Zig has safe coercions for conversions that cannot lose information: for example, a value of a smaller error set can coerce into a larger error set, and a string literal can coerce to <code>[]const u8</code>. Everything else should be explicit with a builtin such as <code>@as</code>, <code>@intCast</code>, <code>@floatFromInt</code>, <code>@ptrCast</code>, or <code>@alignCast</code>.</p>
+
+<p>Peer type resolution happens when multiple branches or operands must agree on one result type: <code>if</code>, <code>switch</code>, loop expressions, labeled blocks with multiple <code>break</code> values, and many binary operators.</p>
+${z(`const value: i64 = if (true) 10 else @as(i64, 20);
+const tag = switch (@as(u2, 1)) {
+    0 => "zero",
+    1 => "one",
+    else => "many",
+};`)}
+
+<h2>Result location semantics</h2>
+<p>Zig often knows where an expression's result is going before the expression is fully analyzed. That destination is the result location. It drives type inference and can avoid temporary copies.</p>
+${z(`const list: [3]u8 = .{ 1, 2, 3 }; // array literal gets its type from the destination
+
+fn choose(flag: bool) u8 {
+    return if (flag) 1 else 2; // branches resolve to the function return type
+}`)}
+
+<p>This is why annotations near the outside of an expression can make the inside compile. When inference seems mysterious, ask: what type is the result being asked to become?</p>
+
+<h2>Compile variables and the compilation model</h2>
+<p><code>@import("builtin")</code> exposes compile-time facts: target, optimization mode, output mode, link mode, and more. Use it for platform-specific code that must be decided at compile time.</p>
+${z(`const builtin = @import("builtin");
+
+pub fn pathSeparator() u8 {
+    return switch (builtin.target.os.tag) {
+        .windows => '\\\\',
+        else => '/',
+    };
+}`)}
+
+<p>Zig compiles a graph of modules. Files are containers, declarations are lazily analyzed, and <code>comptime</code> code runs during compilation. That is why unused broken declarations may not fail until something references them, while syntax errors always fail immediately.</p>
+
+<h2>Source encoding and style</h2>
+<p>Zig source is UTF-8. Invalid UTF-8 is a compile error. Identifiers should stay ASCII unless you have a strong reason, because code is read in terminals, diffs, debuggers, and generated documentation.</p>
+<p>The official style is simple: types are <code>TitleCase</code>; functions, variables, fields, and declarations are <code>snake_case</code>; acronyms follow the same rule as other words. Prefer names that state ownership and side effects clearly.</p>
+
+<h2>Keyword map</h2>
+<p>You do not need to memorize every keyword at once. Group them by job:</p>
+<ul>
+  <li><strong>Declarations:</strong> <code>const</code>, <code>var</code>, <code>fn</code>, <code>test</code>, <code>pub</code>, <code>export</code>, <code>extern</code>, <code>threadlocal</code>.</li>
+  <li><strong>Types and layout:</strong> <code>struct</code>, <code>enum</code>, <code>union</code>, <code>opaque</code>, <code>packed</code>, <code>align</code>, <code>addrspace</code>, <code>linksection</code>, <code>callconv</code>.</li>
+  <li><strong>Control flow:</strong> <code>if</code>, <code>else</code>, <code>switch</code>, <code>while</code>, <code>for</code>, <code>break</code>, <code>continue</code>, <code>return</code>.</li>
+  <li><strong>Error and optional flow:</strong> <code>try</code>, <code>catch</code>, <code>orelse</code>, <code>defer</code>, <code>errdefer</code>, <code>unreachable</code>.</li>
+  <li><strong>Compile-time and codegen:</strong> <code>comptime</code>, <code>inline</code>, <code>noinline</code>, <code>asm</code>.</li>
+  <li><strong>Boolean logic:</strong> <code>and</code>, <code>or</code>.</li>
+</ul>
+
+<h2>Try it: reference drills</h2>
+<p>Add these to your notebook project as tests. They are intentionally small; the goal is to make the reference rules concrete.</p>
+${z(`const std = @import("std");
+
+test "destructuring and peer type resolution" {
+    const pair = .{ @as(u8, 1), @as(u16, 2) };
+    const a, const b = pair;
+    const total: u16 = a + b;
+    try std.testing.expectEqual(@as(u16, 3), total);
+}
+
+test "zero-bit marker" {
+    const Seen = struct {};
+    try std.testing.expectEqual(@as(usize, 0), @sizeOf(Seen));
+}`)}

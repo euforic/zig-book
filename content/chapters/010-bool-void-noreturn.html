@@ -1,0 +1,69 @@
+<p>Three types whose roles are easily confused: <code>bool</code>, <code>void</code>, and <code>noreturn</code>. None of them is interchangeable with the others.</p>
+
+<h2>bool</h2>
+<p><code>bool</code> has exactly two values: <code>true</code> and <code>false</code>. It is a real one-byte type, but unlike C, it does not coerce to or from integers. You cannot write <code>if (1)</code>.</p>
+${z(`var flag: bool = true;
+if (flag) {
+    flag = false;
+}
+
+// Logical operators short-circuit:
+const x: ?i32 = null;
+if (x != null and x.? > 0) {
+    // x.? not evaluated if x == null
+}`)}
+<p><code>and</code> and <code>or</code> are short-circuiting and only work on booleans. <code>!</code> negates. There's no <code>&&</code> or <code>||</code>.</p>
+
+<h3>Bool ↔ Int</h3>
+${z(`const b: bool = true;
+const n: u1 = @intFromBool(b);   // 1
+const b2: bool = (n == 1);       // explicit comparison`)}
+<p>The <code>@intFromBool</code> builtin returns a <code>u1</code>. To go back, compare.</p>
+
+<h2>void</h2>
+<p><code>void</code> is the "no value" type. It has exactly one value, also written <code>void</code> (or more commonly <code>{}</code> when you need to spell it). It's used as a return type, as a field whose presence carries information but no data, and as the value type of sets.</p>
+${z(`fn greet() void {
+    std.debug.print("hi\\n", .{});
+}
+
+// A set is just a hash map with void values:
+var seen = std.AutoHashMap(u32, void).init(allocator);
+try seen.put(42, {});
+
+// A "phantom" field that takes zero space:
+const Marker = struct {
+    important: void = {},
+    value: i32,
+};`)}
+<p>A <code>void</code> field takes zero bytes. A function that returns <code>void</code> ends with an implicit <code>return;</code>.</p>
+
+${note("void is not C's void", "<p style=\"margin:0\">In C, <code>void</code> means \"no type\" &mdash; a placeholder. In Zig it's a real type with one inhabitant. The Zig equivalent of C's <code>void*</code> is <code>?*anyopaque</code> (an optional pointer to an opaque type).</p>")}
+
+<h2>noreturn</h2>
+<p><code>noreturn</code> is the type of expressions and functions that never produce a value because they don't return. <code>return</code>, <code>break</code>, <code>continue</code>, <code>unreachable</code>, and infinite loops all have type <code>noreturn</code>. <code>std.process.exit</code> has return type <code>noreturn</code>.</p>
+${z(`fn fatal(msg: []const u8) noreturn {
+    std.debug.print("fatal: {s}\\n", .{msg});
+    std.process.exit(1);
+}
+
+const x: u32 = computeOrDie() catch fatal("compute failed");`)}
+<p><code>noreturn</code> is special in that an expression of type <code>noreturn</code> can sit anywhere a value is expected — the compiler knows the surrounding code never reaches the point where the value would be used.</p>
+${z(`const value: i32 = if (cond) 42 else return;
+//                                       ^^^^^^
+//          'return' has type noreturn, so the else branch is fine`)}
+
+<h2>unreachable</h2>
+<p>Related: <code>unreachable</code> is an expression of type <code>noreturn</code> that asserts "control flow can never get here." In safe builds it panics if reached; in <code>ReleaseFast</code> it is undefined behavior the compiler can use to optimize.</p>
+${z(`fn dispatch(op: enum { add, sub, mul }) i32 {
+    return switch (op) {
+        .add => 1,
+        .sub => 2,
+        .mul => 3,
+        // exhaustive switch on an enum needs no else — but if you do:
+        // else => unreachable,
+    };
+}`)}
+${danger("Don't lie", "<p style=\"margin:0\">If you mark a path <code>unreachable</code> and it turns out to be reachable, your program has undefined behavior in <code>ReleaseFast</code>. Use it only when you've genuinely proved the path is impossible.</p>")}
+
+<h2>anyerror</h2>
+<p>While we're here: <code>anyerror</code> is "the set of all errors." It's the most permissive error set. We'll see it properly in Part V, but mention it now so you don't see it for the first time later and panic.</p>

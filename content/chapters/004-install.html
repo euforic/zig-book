@@ -1,0 +1,74 @@
+<p>Zig is distributed as a single self-contained tarball. The compiler, standard library, vendored libcs for cross-compilation, and the language reference all live in one folder. Installation is unpacking that folder somewhere on your <code>PATH</code>.</p>
+
+<h2>The official download</h2>
+<p>Go to <a href="https://ziglang.org/download/" target="_blank" rel="noopener">ziglang.org/download</a> and grab the 0.16.0 archive for your operating system and architecture.</p>
+
+${note("Signed releases", `<p style="margin:0">Every Zig archive is signed with minisign. Verifying signatures is optional but recommended, especially in pipelines. The public key lives on the download page.</p>`)}
+
+<h3>Linux and macOS</h3>
+${sh(`# Pick a place to keep tools
+mkdir -p ~/opt
+cd ~/opt
+
+# Download (replace ARCH-OS with your target, e.g. x86_64-linux)
+curl -LO https://ziglang.org/download/0.16.0/zig-ARCH-OS-0.16.0.tar.xz
+
+# Unpack
+tar -xf zig-ARCH-OS-0.16.0.tar.xz
+mv zig-ARCH-OS-0.16.0 zig-0.16.0
+
+# Add to PATH (bash/zsh; adjust for your shell)
+echo 'export PATH="$HOME/opt/zig-0.16.0:$PATH"' >> ~/.profile
+source ~/.profile`)}
+
+<h3>Windows</h3>
+<p>Download the <code>.zip</code> archive for <code>x86_64-windows</code>, unzip it somewhere stable like <code>C:\\zig</code>, and add that folder to your <code>PATH</code> via the System Properties → Environment Variables dialog. PowerShell will pick it up after a new shell.</p>
+
+<h3>Package managers</h3>
+<p>Most package managers ship Zig, but versions lag. Use them for convenience, not for following along with this book:</p>
+${sh(`# Homebrew (macOS / Linux)
+brew install zig
+
+# Snap (Linux)
+snap install zig --classic --beta
+
+# Arch Linux
+pacman -S zig
+
+# Windows (scoop)
+scoop install zig`)}
+
+<h3>Version managers</h3>
+<p>A version manager is a clean way to pin a specific Zig release per project:</p>
+${sh(`# Stable release for this book
+zvm install 0.16.0
+zvm use 0.16.0`)}
+
+<h2>Verifying the install</h2>
+${sh(`$ zig version
+0.16.0
+$ zig env`)}
+<p><code>zig env</code> prints the compiler's view of the world: where its standard library lives, the default cache directory, the host target triple, and so on. If it runs without error, you're set.</p>
+
+<h2>What ships in the box</h2>
+<p>That single <code>zig</code> binary is more than a compiler. It is, at minimum:</p>
+<ul>
+  <li>A Zig compiler with its own LLVM-free backends for x86_64, aarch64, and WebAssembly in debug mode (LLVM is used for optimized builds and other targets).</li>
+  <li>A C compiler (<code>zig cc</code>) and C++ compiler (<code>zig c++</code>) that wrap Clang with built-in libcs for dozens of OS/arch combinations.</li>
+  <li>A build system runner (<code>zig build</code>) that executes <code>build.zig</code> scripts.</li>
+  <li>A C-to-Zig translator via <code>zig translate-c</code> and the build-system <code>TranslateC</code> step.</li>
+  <li>An object file inspector (<code>zig objcopy</code>), a unit-test runner, and a fuzzer.</li>
+</ul>
+
+<h2>Editor support</h2>
+<p>You don't need an IDE, but you'll be happier with one of these:</p>
+<ul>
+  <li><strong>ZLS</strong> — the Zig Language Server. Works with VS Code, Neovim, Helix, Emacs, Sublime, and anything else that speaks LSP. Install via <a href="https://github.com/zigtools/zls" target="_blank" rel="noopener">github.com/zigtools/zls</a>; make sure the ZLS version matches your Zig version.</li>
+  <li><strong>VS Code</strong> — install the official "Zig Language" extension, then point it at your <code>zig</code> binary and at <code>zls</code>.</li>
+  <li><strong>Neovim</strong> — <code>nvim-lspconfig</code> ships a <code>zls</code> recipe; tree-sitter-zig handles highlighting.</li>
+</ul>
+
+${tip("Pin your Zig version per project", `<p style="margin:0">If a project's <code>build.zig.zon</code> specifies a <code>minimum_zig_version</code>, you'll get a clear error when your compiler is too old. For cross-team work, tools like <a href="https://github.com/marler8997/zigup" target="_blank" rel="noopener">zigup</a> or <a href="https://github.com/tristanisham/zvm" target="_blank" rel="noopener">zvm</a> let you switch between Zig versions per project.</p>`)}
+
+<h2>Next</h2>
+<p>You have a working compiler. Time to use it.</p>

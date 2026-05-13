@@ -1,0 +1,108 @@
+<p>Most Zig code never reaches for inline assembly. But it's there, with a clean syntax, when you need a specific instruction the optimizer can't be coaxed into emitting. Likewise, the <code>@</code>-builtins fill in everywhere a regular function couldn't — they take types, comptime values, or produce side effects on the compiler itself.</p>
+
+<h2>Inline assembly</h2>
+<p>The <code>asm</code> expression takes a template string and a list of inputs, outputs, and clobbers:</p>
+${z(`fn syscall_write(fd: usize, buf: [*]const u8, len: usize) usize {
+    return asm volatile (
+        \\\\syscall
+        : [ret] "={rax}" (-> usize),
+        : [num] "{rax}" (@as(usize, 1)),
+          [arg1] "{rdi}" (fd),
+          [arg2] "{rsi}" (buf),
+          [arg3] "{rdx}" (len),
+        : "rcx", "r11", "memory"
+    );
+}`)}
+<p>The template uses target-specific assembly syntax (AT&T on x86 here). Outputs come first, then inputs, then clobbers. Each operand has a name, a constraint string, and an expression. <code>volatile</code> tells the compiler it has side effects and must not be removed.</p>
+
+<h2>asm without outputs</h2>
+<p>If you just need to emit an instruction:</p>
+${z(`inline fn cpuPause() void {
+    asm volatile ("pause" ::: "memory");
+}`)}
+<p>The three colons separate output / input / clobber lists. Empty lists are explicit, not optional.</p>
+
+<h2>The builtins family</h2>
+<p>Zig has dozens of <code>@</code>-prefixed builtins. Roughly by category:</p>
+
+<h3>Type and value casting</h3>
+${z(`@as(T, value)            // assert-and-coerce to T (no run-time conversion)
+@intCast(value)         // narrow/widen int — may panic if out of range
+@floatCast(value)        // float widening/narrowing
+@intFromFloat(value)     // truncate float to int
+@floatFromInt(value)     // int to float
+@enumFromInt(value)      // u32 -> MyEnum, validated in safe builds
+@intFromEnum(e)          // MyEnum -> integer tag
+@bitCast(value)          // reinterpret bits (same size required)
+@ptrCast(ptr)            // pointer-to-pointer cast
+@ptrFromInt(value)       // usize -> pointer (dangerous; usually FFI)
+@intFromPtr(ptr)         // pointer -> usize
+@alignCast(ptr)          // claim a tighter alignment than the type says`)}
+
+<h3>Type introspection</h3>
+${z(`@TypeOf(expr)            // compute the type of an expression
+@typeInfo(T)             // get the reflective info struct
+@typeName(T)             // "main.MyStruct"
+@hasField(T, "name")
+@hasDecl(T, "name")
+@field(value, "name")    // dynamic field access (name must be comptime)
+@offsetOf(T, "name")
+@sizeOf(T)
+@bitSizeOf(T)
+@alignOf(T)`)}
+
+<h3>Memory and pointers</h3>
+${z(`@memcpy(dst_slice, src_slice)
+@memset(dst_slice, value)
+@volatileLoad(ptr)
+@volatileStore(ptr, value)
+@atomicLoad(T, ptr, ordering)
+@atomicStore(T, ptr, value, ordering)
+@cmpxchgStrong(...)  / @cmpxchgWeak(...)
+@fence(ordering)
+@prefetch(ptr, options)`)}
+
+<h3>Math</h3>
+${z(`@min(a, b)   @max(a, b)
+@abs(x)
+@sqrt(x)  @sin(x)  @cos(x)  @log(x)  @exp(x)
+@mulAdd(T, a, b, c)         // fused multiply-add
+@addWithOverflow(a, b)       // returns {result, overflow_flag}
+@bitReverse(x)
+@byteSwap(x)
+@clz(x)  @ctz(x)  @popCount(x)`)}
+
+<h3>Compile-time</h3>
+${z(`@compileError("...")
+@compileLog(value, ...)
+@import("std")
+@embedFile("data.bin")        // load a file as []u8 at comptime
+@hasInclude("header.h")       // C interop check
+@cInclude("stdio.h")          // c interop (build system, 0.16+)`)}
+
+<h3>Other</h3>
+${z(`@panic("message")
+@trap()                      // immediate crash
+@breakpoint()                // debugger breakpoint
+@returnAddress()
+@frameAddress()
+@inComptime()                // are we currently in comptime?
+@src()                       // source location info struct`)}
+
+<h2>Atomics</h2>
+<p>Lock-free programming uses the atomic builtins with explicit memory orderings:</p>
+${z(`var counter: u32 = 0;
+
+fn incr() void {
+    _ = @atomicRmw(u32, &counter, .Add, 1, .monotonic);
+}
+
+fn read() u32 {
+    return @atomicLoad(u32, &counter, .acquire);
+}`)}
+<p>Orderings: <code>.unordered</code>, <code>.monotonic</code>, <code>.acquire</code>, <code>.release</code>, <code>.acq_rel</code>, <code>.seq_cst</code>. Same semantics as the C++ memory model. Default to <code>.seq_cst</code> unless you have a reason.</p>
+
+<h2>C header translation</h2>
+<p>C header translation belongs in the build graph through <code>translate-c</code>. We'll cover that build-driven workflow in Part XI.</p>
+
+${warn("Inline asm and undefined behavior", "<p style=\"margin:0\">An inline asm block can break invariants the optimizer relies on. If your asm reads or writes memory, list <code>\\\"memory\\\"</code> as a clobber. If it modifies condition flags, list <code>\\\"cc\\\"</code>. Forgetting clobbers leads to bugs that disappear under <code>-Doptimize=Debug</code>.</p>")}

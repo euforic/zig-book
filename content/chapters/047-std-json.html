@@ -1,0 +1,109 @@
+<p>JSON support in Zig is full-featured: parse to dynamic <code>Value</code>, parse into a typed struct, serialize a struct, stream-parse a giant document without allocating, stream-serialize, custom field handling, the works. <code>std.json</code> punches above its weight.</p>
+
+<h2>Parse to a typed struct</h2>
+${z(`const Config = struct {
+    name: []const u8,
+    port: u16,
+    debug: bool = false,
+    tags: []const []const u8 = &.{},
+};
+
+const src =
+    \\\\{ "name": "api", "port": 8080, "tags": ["alpha", "beta"] }
+;
+
+const parsed = try std.json.parseFromSlice(Config, allocator, src, .{});
+defer parsed.deinit();
+
+std.debug.print("{s}:{}\\n", .{ parsed.value.name, parsed.value.port });`)}
+<p><code>parseFromSlice</code> returns a <code>Parsed(T)</code> that owns all the allocated memory (strings, sub-arrays). When you <code>deinit()</code>, everything frees together.</p>
+
+<h2>Field defaults and missing fields</h2>
+<p>If a JSON object lacks a field that has a Zig default, the default is used. If a field has no default and is missing, you get <code>error.MissingField</code>. To allow unknown JSON keys, pass <code>.ignore_unknown_fields = true</code>:</p>
+${z(`const parsed = try std.json.parseFromSlice(Config, allocator, src, .{
+    .ignore_unknown_fields = true,
+});`)}
+
+<h2>Optional, union, enum</h2>
+<p>Zig types map naturally:</p>
+<ul>
+  <li><code>?T</code> ↔ <code>null</code> or a value.</li>
+  <li>Tagged union ↔ object with a single key matching the tag (default; configurable).</li>
+  <li>Enum ↔ string of the tag name.</li>
+  <li>Numeric types ↔ JSON number, with range checks.</li>
+</ul>
+
+<h2>Custom field handling</h2>
+<p>For full control over how a type parses (renaming fields, custom validation), implement <code>pub fn jsonParse(allocator, source, options) !T</code> on the type. The same method on the writer side is <code>jsonStringify</code>.</p>
+
+<h2>Dynamic Value</h2>
+<p>When you don't know the shape ahead of time:</p>
+${z(`const parsed = try std.json.parseFromSlice(std.json.Value, allocator, src, .{});
+defer parsed.deinit();
+
+const root = parsed.value;
+switch (root) {
+    .object => |obj| {
+        if (obj.get("name")) |name| {
+            std.debug.print("name = {s}\\n", .{name.string});
+        }
+    },
+    else => return error.NotObject,
+}`)}
+<p><code>Value</code> is a tagged union: <code>null</code>, <code>bool</code>, <code>integer</code>, <code>float</code>, <code>number_string</code>, <code>string</code>, <code>array</code>, <code>object</code>. Navigate it with switches.</p>
+
+<h2>Serializing</h2>
+${z(`var out: std.ArrayList(u8) = .empty;
+defer out.deinit(allocator);
+
+try std.json.stringify(.{
+    .name = "service",
+    .port = @as(u16, 8080),
+    .tags = &[_][]const u8{ "alpha", "beta" },
+}, .{ .whitespace = .indent_2 }, out.writer(allocator));
+
+std.debug.print("{s}\\n", .{out.items});`)}
+<p>The whitespace option controls indentation: <code>.minified</code>, <code>.indent_2</code>, <code>.indent_4</code>, <code>.indent_tab</code>.</p>
+
+<h2>Streaming parser</h2>
+<p>For large documents you don't want to load into memory:</p>
+${z(`var stream = std.json.Scanner.initStreaming(allocator);
+defer stream.deinit();
+
+while (true) {
+    var buf: [4096]u8 = undefined;
+    const n = try src_reader.read(&buf);
+    if (n == 0) {
+        stream.endInput();
+    } else {
+        stream.feedInput(buf[0..n]);
+    }
+
+    while (true) {
+        const tok = stream.next() catch |e| switch (e) {
+            error.BufferUnderrun => break,
+            else => return e,
+        };
+        if (tok == .end_of_document) return;
+        // handle tok ...
+    }
+}`)}
+<p>You drive the scanner with bytes; it yields tokens (object_begin, key, string, number, etc.). This is how you process gigabyte JSON without ever holding it all at once.</p>
+
+<h2>Streaming writer</h2>
+<p>Likewise, a <code>WriteStream</code> emits a JSON document incrementally:</p>
+${z(`var w = std.json.writeStream(output_writer, .{ .whitespace = .indent_2 });
+defer w.deinit();
+
+try w.beginObject();
+try w.objectField("status");
+try w.write("ok");
+try w.objectField("items");
+try w.beginArray();
+for (items) |item| try w.write(item);
+try w.endArray();
+try w.endObject();`)}
+<p>This pattern is the right shape for streaming HTTP responses where you can't (or don't want to) build the entire JSON in memory before sending.</p>
+
+<h2>Error handling</h2>
+<p>Parse errors include the byte offset and a kind tag (<code>UnexpectedEndOfInput</code>, <code>SyntaxError</code>, <code>UnexpectedToken</code>, etc.). When parsing into a typed struct, additional errors include <code>MissingField</code>, <code>UnknownField</code>, and type-mismatch errors. Most code can just <code>try</code> and propagate.</p>

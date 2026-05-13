@@ -1,0 +1,102 @@
+<p><code>std.process</code> is the gateway to OS-level facts and side effects: command-line arguments, environment variables, current paths, exit codes, and child processes. In 0.16, argv and environment variables are no longer modeled as ambient mutable globals. They enter your program through <code>std.process.Init</code>, and process operations use <code>std.Io</code>.</p>
+
+<h2>Command-line arguments</h2>
+${z(`const std = @import("std");
+
+pub fn main(init: std.process.Init) !void {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    for (args, 0..) |arg, i| {
+        std.debug.print("argv[{}] = {s}\\n", .{ i, arg });
+    }
+}`)}
+<p><code>toSlice</code> allocates out of an allocator you provide. The process arena is convenient because argument storage can live until process exit and be reclaimed automatically.</p>
+
+<h2>Iterator form</h2>
+<p>For programs that just want to step through args without allocating an argument array:</p>
+${z(`var it = try init.minimal.args.iterateAllocator(init.arena.allocator());
+defer it.deinit();
+_ = it.next(); // skip program name
+while (it.next()) |arg| {
+    std.debug.print("{s}\\n", .{arg});
+}`)}
+
+<h2>Environment variables</h2>
+${note("Environment is explicit", "<p style=\"margin:0\">Environment access flows through <code>std.process.Init</code>. Pass required settings down explicitly, or pass a <code>*const std.process.Environ.Map</code> into code that truly needs environment lookup.</p>")}
+${z(`pub fn main(init: std.process.Init) !void {
+    if (init.environ_map.get("HOME")) |home| {
+        std.debug.print("HOME={s}\\n", .{home});
+    }
+
+    for (init.environ_map.keys(), init.environ_map.values()) |key, value| {
+        std.debug.print("{s}={s}\\n", .{ key, value });
+    }
+}`)}
+
+<h2>Exit codes</h2>
+${z(`if (bad_thing_happened) std.process.exit(1);
+
+// or return from main with an error union
+pub fn main() !void {
+    return error.SomethingBroke; // exits with code 1, prints return trace
+}`)}
+
+<h2>Child processes</h2>
+${z(`var child = try std.process.spawn(io, .{
+    .argv = &.{ "ls", "-la" },
+    .stdout = .pipe,
+    .stderr = .inherit,
+});
+defer child.kill(io);
+
+var reader_buf: [4096]u8 = undefined;
+var stdout_reader = child.stdout.?.readerStreaming(io, &reader_buf);
+
+var output = std.Io.Writer.Allocating.init(allocator);
+defer output.deinit();
+_ = try stdout_reader.interface.streamRemaining(&output.writer);
+
+const term = try child.wait(io);
+switch (term) {
+    .exited => |code| std.debug.print("exit = {}\\n", .{code}),
+    .signal => |sig| std.debug.print("signal = {t}\\n", .{sig}),
+    else => std.debug.print("process did not exit normally\\n", .{}),
+}
+std.debug.print("output:\\n{s}\\n", .{output.written()});`)}
+<p>The <code>stdin</code>, <code>stdout</code>, and <code>stderr</code> fields choose how each stream is wired up: <code>.pipe</code> captures, <code>.inherit</code> shares with the parent, <code>.ignore</code> connects to a null stream, and <code>.close</code> leaves the descriptor absent.</p>
+
+<h2>Run-and-collect</h2>
+<p>For the common case of "run a command, collect output, return exit code," there's <code>run</code>:</p>
+${z(`const result = try std.process.run(allocator, io, .{
+    .argv = &.{ "git", "rev-parse", "HEAD" },
+    .stdout_limit = .limited(1 << 20),
+    .stderr_limit = .limited(1 << 20),
+});
+defer allocator.free(result.stdout);
+defer allocator.free(result.stderr);
+
+switch (result.term) {
+    .exited => |code| if (code != 0) return error.GitFailed,
+    else => return error.GitFailed,
+}
+const sha = std.mem.trim(u8, result.stdout, "\\n");
+std.debug.print("at {s}\\n", .{sha});`)}
+
+<h2>Setting environment for children</h2>
+<p>Since the parent's env is no longer global, you must explicitly construct the child's environment:</p>
+${z(`var env = try init.environ_map.clone(allocator);
+defer env.deinit();
+try env.put("LANG", "C");
+
+var child = try std.process.spawn(io, .{
+    .argv = &.{ "myprog" },
+    .environ_map = &env,
+});
+defer child.kill(io);
+_ = try child.wait(io);`)}
+
+<h2>Getting the current executable's path</h2>
+${z(`var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+const n = try std.process.executablePath(io, &buf);
+const self = buf[0..n];
+std.debug.print("running from {s}\\n", .{self});`)}
+<p>Useful for finding resources relative to the executable, or for self-update tools.</p>

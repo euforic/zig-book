@@ -1,0 +1,93 @@
+<p>An ordinary Zig struct lays out its fields with padding for alignment, in declaration order — but the compiler is free to add bytes between fields if that makes access faster. For most code that's fine. For hardware registers, network packets, and on-disk file formats, you need <em>exact</em> control. That's <code>packed struct</code>.</p>
+
+<h2>The three layouts</h2>
+<p>Zig structs come in three layouts:</p>
+<ul>
+  <li><code>struct</code> — natural layout. Compiler may pad and reorder for performance. Default.</li>
+  <li><code>extern struct</code> — C-ABI layout. Fields in declaration order, padding per C rules. Use for FFI.</li>
+  <li><code>packed struct</code> — bit-level layout. Fields packed at exactly the bit width you specified. Backed by an integer.</li>
+</ul>
+${z(`const Color = packed struct {
+    r: u5,
+    g: u6,
+    b: u5,
+}; // exactly 16 bits
+
+comptime {
+    std.debug.assert(@bitSizeOf(Color) == 16);
+    std.debug.assert(@sizeOf(Color) == 2);
+}`)}
+<p>A packed struct is essentially an integer with named bit fields. You read/write it like a struct; the compiler does the masking and shifting.</p>
+
+<h2>Casting to and from the backing integer</h2>
+<p>You can convert between a packed struct and its underlying integer with <code>@bitCast</code>:</p>
+${z(`const c: Color = .{ .r = 0x1F, .g = 0x00, .b = 0x1F };
+const word: u16 = @bitCast(c);
+
+const back: Color = @bitCast(word);
+std.debug.assert(back.r == 0x1F);`)}
+<p>This is how you build a packet header in memory, send it as bytes, and reconstruct it on the other end with zero serialization code.</p>
+
+<h2>Packed unions</h2>
+<p>A packed union overlays fields at the same bits. Each field must be the same bit width:</p>
+${z(`const Reg = packed union {
+    raw: u32,
+    fields: packed struct {
+        flags: u8,
+        count: u16,
+        version: u8,
+    },
+};
+
+var r: Reg = .{ .raw = 0xDEAD_BEEF };
+std.debug.print("flags = {x}\\n", .{r.fields.flags});`)}
+
+${note("Packed-union rules", "<p style=\"margin:0\">Packed unions can declare an explicit backing integer with <code>packed union(u32) { ... }</code>, and equality comparison (<code>==</code>) works between packed unions of the same type. Pointer-typed fields are not allowed in packed structs or unions, and packed unions may not have unused bits.</p>")}
+
+<h2>Bit-level slices and arrays</h2>
+<p>Inside a packed struct, you can use small-width integers and even bool fields (each takes one bit):</p>
+${z(`const Flags = packed struct {
+    enabled: bool,
+    visible: bool,
+    locked: bool,
+    _reserved: u5 = 0,
+};
+
+const f: Flags = .{ .enabled = true, .visible = true, .locked = false };
+const byte: u8 = @bitCast(f);`)}
+<p>This is how you map MMIO registers, ELF headers, instruction encodings — anything where the spec gives you bit positions.</p>
+
+<h2>Endianness</h2>
+<p>Packed structs use the host endianness by default. When you need a specific order, use the integer-side helpers:</p>
+${z(`const Header = packed struct {
+    magic: u32,
+    version: u16,
+    flags: u16,
+};
+
+const h: Header = .{ .magic = 0xCAFEBABE, .version = 1, .flags = 0 };
+const word: u64 = @bitCast(h);
+const be = std.mem.nativeToBig(u64, word);
+try writer.writeAll(std.mem.asBytes(&be));`)}
+<p>For richer endianness control across a whole struct, <code>std.mem.writeInt</code> / <code>readInt</code> / <code>byteSwapAllFields</code> exist.</p>
+
+<h2>extern struct: when you must talk C</h2>
+<p>For C-compatible layouts, <code>extern struct</code> is the right tool. It uses the platform's C ABI: fields in source order, padding to align each field naturally.</p>
+${z(`const Stat = extern struct {
+    dev: u64,
+    ino: u64,
+    mode: u32,
+    nlink: u32,
+    // ...
+};
+
+extern fn fstat(fd: i32, statbuf: *Stat) i32;`)}
+<p>For an MMIO register set or a hardware command block, <code>extern struct</code> plus <code>volatile</code> pointer reads gives you what assembly would.</p>
+
+<h2>When to reach for each</h2>
+<ul>
+  <li>Internal data structure → plain <code>struct</code>.</li>
+  <li>Crosses a C boundary → <code>extern struct</code>.</li>
+  <li>Bit-exact layout (registers, wire formats) → <code>packed struct</code>.</li>
+</ul>
+<p>The choice is structural — change layout, change keyword, all the access syntax stays the same.</p>

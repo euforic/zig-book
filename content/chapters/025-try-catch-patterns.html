@@ -1,0 +1,90 @@
+<p>Most Zig functions follow a small set of error patterns. Once they're in your fingers, error handling is unobtrusive — you barely notice it because it's always the right amount of code.</p>
+
+<h2>Propagate everything: try</h2>
+<p>The most common pattern is "do this; if it fails, fail the same way":</p>
+${z(`fn copy(io: std.Io, allocator: std.mem.Allocator, src: []const u8, dst: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    const data = try cwd.readFileAlloc(io, src, allocator, .limited(1 << 20));
+    defer allocator.free(data);
+    try cwd.writeFile(io, .{ .sub_path = dst, .data = data });
+}`)}
+<p>Two operations, two <code>try</code>s, one inferred error set merging both. Nothing else needed.</p>
+
+<h2>Provide a default: catch &lt;value&gt;</h2>
+<p>When the failure isn't really a failure, just an absence:</p>
+${z(`const port = parsePort(env_value) catch 8080;
+const home = init.environ_map.get("HOME") orelse "/";`)}
+<p>The right-hand side of <code>catch</code> must have the same type as the success payload.</p>
+
+<h2>Handle specific errors: catch with switch</h2>
+<p>To branch on which error happened:</p>
+${z(`const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
+    error.FileNotFound => return defaults,
+    error.AccessDenied => {
+        std.log.warn("can't read {s}", .{path});
+        return error.Skipped;
+    },
+    else => |e| return e,
+};`)}
+<p>The <code>else => |e| return e</code> arm rethrows anything you didn't handle. Without it, the switch must be exhaustive over the function's error set — which is sometimes what you want, sometimes too rigid.</p>
+
+<h2>Roll back on error: errdefer</h2>
+<p>You met <code>defer</code> already. <code>errdefer</code> is its asymmetric cousin: it runs only if the enclosing scope returns an error.</p>
+${z(`fn createUser(allocator: std.mem.Allocator, name: []const u8) !*User {
+    const user = try allocator.create(User);
+    errdefer allocator.destroy(user);
+
+    user.name = try allocator.dupe(u8, name);
+    errdefer allocator.free(user.name);
+
+    try database.insert(user);
+    return user;
+}`)}
+<p>If <code>database.insert</code> fails, both <code>errdefer</code>s fire (last registered, first run): free the name, then destroy the user. On success, neither runs and the caller owns everything.</p>
+
+${tip("errdefer pairs with try", "<p style=\"margin:0\">Whenever you allocate or acquire a resource and then call a fallible function, write the <code>errdefer</code> cleanup right under the acquisition. Read top to bottom: \"acquire / on-failure release / next step.\"</p>")}
+
+<h2>Capture the error in errdefer</h2>
+<p>Modern Zig lets <code>errdefer</code> bind the error value, so cleanup can log or branch on what went wrong:</p>
+${z(`fn step() !void {
+    var things: u32 = 0;
+    errdefer |err| std.log.warn("step failed with {} after {} items", .{ err, things });
+
+    while (more()) : (things += 1) try processOne();
+}`)}
+
+<h2>Error return traces</h2>
+<p>When a Zig program returns an error from <code>main</code>, the runtime prints a <em>return trace</em>: every <code>return error.X</code> and every <code>try</code> on the path that propagated it. This is not a stack trace of where the program <em>is</em>; it's a trace of how the error got <em>here</em>.</p>
+${sh(`error: NotFound
+/home/zig/app.zig:12:5: in loadConfig
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+                 ^
+/home/zig/app.zig:24:9: in main
+        const cfg = try loadConfig(alloc, "config.toml");
+                    ^`)}
+<p>Return traces have near-zero cost on the success path; they only allocate when an error is actually returned, and only in debug/safe build modes.</p>
+
+<h2>unreachable for "this error cannot happen"</h2>
+<p>If your domain knowledge tells you an error is impossible, you can assert it:</p>
+${z(`const data = readFromMemory(buf) catch unreachable;`)}
+<p>This is a strong claim — in safe builds, hitting <code>unreachable</code> panics; in <code>ReleaseFast</code>/<code>ReleaseSmall</code> it's undefined behavior. Use it sparingly, and prefer <code>catch |e| std.debug.panic("bug: {}", .{e})</code> when you want the panic but not the UB.</p>
+
+<h2>A whole pattern in one function</h2>
+${z(`fn buildIndex(allocator: std.mem.Allocator, paths: []const []const u8) !*Index {
+    const idx = try allocator.create(Index);
+    errdefer allocator.destroy(idx);
+
+    idx.* = .{ .entries = .empty };
+    errdefer idx.entries.deinit(allocator);
+
+    for (paths) |p| {
+        const entry = parseEntry(p) catch |e| switch (e) {
+            error.Empty => continue,
+            else => return e,
+        };
+        try idx.entries.append(allocator, entry);
+    }
+
+    return idx;
+}`)}
+<p>One <code>try</code> per fallible call, one <code>errdefer</code> per acquired resource, one explicit <code>catch</code> where the policy is "skip empties, fail on anything else." This is what idiomatic error code looks like.</p>

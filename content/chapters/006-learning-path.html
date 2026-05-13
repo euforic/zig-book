@@ -1,0 +1,56 @@
+<p>This book is not meant to be a reference you merely read. Zig becomes useful when you can move from a compiler error, to the language reference, to the standard library source, to a small working program without losing the thread. This chapter gives you that path.</p>
+
+<h2>The order that works</h2>
+<ol>
+  <li><strong>Run every early example.</strong> Zig's errors are part of the teaching material. Type the code, break it deliberately, and read what the compiler says.</li>
+  <li><strong>Use the official language reference for exact rules.</strong> This book explains the shape; the reference is the specification-level map.</li>
+  <li><strong>Read std source when an API matters.</strong> For 0.16.0, your local <code>zig env</code> output points at the exact <code>std_dir</code> used by your compiler.</li>
+  <li><strong>Practice small, then integrate.</strong> Use Ziglings and Exercism for focused drills, then build one real tool that touches files, args, errors, allocation, and tests.</li>
+</ol>
+
+<h2>Official resources to keep open</h2>
+<ul>
+  <li><a href="https://ziglang.org/learn/" target="_blank" rel="noopener">ziglang.org/learn</a> is the official learning index.</li>
+  <li><a href="https://ziglang.org/documentation/0.16.0/" target="_blank" rel="noopener">The 0.16.0 language reference</a> is the authority for syntax, semantics, builtins, and edge cases.</li>
+  <li><a href="https://ziglang.org/documentation/0.16.0/std/" target="_blank" rel="noopener">The 0.16.0 standard library docs</a> are useful for browsing, but source is better when behavior matters.</li>
+  <li><a href="https://ziglang.org/learn/build-system/" target="_blank" rel="noopener">The build-system guide</a> is the canonical companion to Part X.</li>
+  <li><a href="https://ziglang.org/download/0.16.0/release-notes.html" target="_blank" rel="noopener">The 0.16.0 release notes</a> explain the stable release this book targets.</li>
+</ul>
+
+${tip("Use local truth first", `<p style="margin:0">Run <code>zig env</code>, open <code>std_dir</code>, and search with <code>rg</code>. If the docs and your installed source disagree, your installed source wins for code you are compiling today.</p>`)}
+
+<h2>Practice resources</h2>
+<ul>
+  <li><a href="https://ziglings.org" target="_blank" rel="noopener">Ziglings</a> gives you tiny broken programs to fix. Use it while reading Parts I through VII.</li>
+  <li><a href="https://exercism.org/tracks/zig" target="_blank" rel="noopener">Exercism Zig</a> builds fluency through repeated small problems and mentoring.</li>
+  <li><a href="https://zig.guide" target="_blank" rel="noopener">zig.guide</a> is a concise alternate explanation when you want another angle.</li>
+  <li><a href="https://pedropark99.github.io/zig-book/" target="_blank" rel="noopener">Introduction to Zig</a> is project-based and pairs well with the applied chapters in this book.</li>
+</ul>
+
+<h2>The active-project loop</h2>
+<p>Every serious Zig project forces the same loop:</p>
+<ol>
+  <li>Write the smallest function that expresses the real boundary: bytes, files, args, allocator, or target.</li>
+  <li>Add one test using <code>std.testing</code> or a build step that runs the executable.</li>
+  <li>Run <code>zig build test</code> or <code>zig build check</code> before adding features.</li>
+  <li>When an API is unclear, jump to std source instead of copying an unverified snippet.</li>
+  <li>Cross-compile once the local version works. Target mistakes teach you what was accidentally host-specific.</li>
+</ol>
+
+<h2>Try it: your running notebook</h2>
+<p>Create a throwaway project named <code>zig-notes</code>. As you read, keep a <code>src/experiments.zig</code> file with short test blocks. Each time a concept feels fuzzy, write a test that proves it.</p>
+${sh(`mkdir zig-notes && cd zig-notes
+zig init
+mkdir -p src
+$EDITOR src/experiments.zig
+zig test src/experiments.zig`)}
+
+${z(`const std = @import("std");
+
+test "slice equality needs std.mem.eql" {
+    const a = "zig";
+    const b = "zig";
+    try std.testing.expect(std.mem.eql(u8, a, b));
+}`)}
+
+<p>By the end of the book, that file should be full of small facts you proved yourself. That is the difference between recognizing Zig syntax and being able to use Zig actively.</p>

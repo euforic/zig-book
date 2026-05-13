@@ -1,0 +1,90 @@
+<p>One of Zig's most distinctive properties is that cross-compilation is built in by default. There is no separate cross-toolchain to install. The compiler ships with libc headers for major systems and uses lld for linking; from a single Zig install you can target Linux, macOS, Windows, FreeBSD, WebAssembly, multiple Arm variants, RISC-V, and more.</p>
+
+<h2>Specifying a target</h2>
+${sh(`# Linux arm64 musl static binary, from any host
+zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseFast
+
+# Windows x86_64 (gnu ABI)
+zig build -Dtarget=x86_64-windows-gnu
+
+# macOS arm64
+zig build -Dtarget=aarch64-macos
+
+# WebAssembly with WASI
+zig build -Dtarget=wasm32-wasi`)}
+
+<p>Target triples follow the pattern <code>arch-os-abi</code>. The <code>arch</code> is the CPU family (<code>x86_64</code>, <code>aarch64</code>, <code>riscv64</code>, <code>wasm32</code>, etc.). The <code>os</code> is the operating system (<code>linux</code>, <code>macos</code>, <code>windows</code>, <code>freebsd</code>, <code>wasi</code>, <code>freestanding</code>). The <code>abi</code> is the binary interface (<code>gnu</code>, <code>musl</code>, <code>msvc</code>, <code>none</code>).</p>
+
+<h2>Targeting a specific CPU</h2>
+<p>You can refine the target with a CPU model or feature set:</p>
+
+${sh(`# Apple M1 specifically
+zig build -Dtarget=aarch64-macos -Dcpu=apple_m1
+
+# x86_64 baseline + AVX2 + BMI2
+zig build -Dtarget=x86_64-linux -Dcpu=baseline+avx2+bmi2
+
+# Generic x86_64 with no SIMD assumptions
+zig build -Dtarget=x86_64-linux -Dcpu=x86_64`)}
+
+<h2>The Zig tier system</h2>
+<p>Not every target gets the same level of support. The Zig project publishes a <strong>tier list</strong> in the release notes and platform-support documentation:</p>
+<ul>
+  <li><strong>Tier 1</strong> — fully supported, all tests pass, frequently used. Examples: <code>x86_64-linux</code>, <code>aarch64-macos</code>, <code>x86_64-windows-msvc</code>, <code>wasm32-wasi</code>.</li>
+  <li><strong>Tier 2</strong> — standard library mostly works; tests run; minor bugs possible. Examples: <code>aarch64-linux</code>, <code>riscv64-linux</code>, <code>x86_64-freebsd</code>.</li>
+  <li><strong>Tier 3</strong> — compiles but std incomplete; expect rough edges. Examples: many embedded targets, exotic OSes.</li>
+  <li><strong>Tier 4</strong> — experimental; expect to fix things yourself.</li>
+</ul>
+<p>For production, prefer Tier 1 or 2. For Tier 3, plan extra QA time.</p>
+
+${tip("Check platform support before promising releases", `<p style="margin:0">For this book's target, use the <a href="https://ziglang.org/download/0.16.0/release-notes.html#Target-Support" target="_blank" rel="noopener">0.16.0 Target Support</a> section. Master may have different tier status.</p>`)}
+
+<h2>Building for many targets at once</h2>
+${z(`pub fn build(b: *std.Build) void {
+    const optimize = b.standardOptimizeOption(.{});
+
+    const targets: []const std.Target.Query = &.{
+        .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+        .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl },
+        .{ .cpu_arch = .x86_64, .os_tag = .windows, .abi = .gnu },
+        .{ .cpu_arch = .aarch64, .os_tag = .macos },
+    };
+
+    for (targets) |query| {
+        const resolved = b.resolveTargetQuery(query);
+        const exe = b.addExecutable(.{
+            .name = "app",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/main.zig"),
+                .target = resolved,
+                .optimize = optimize,
+            }),
+        });
+
+        const install = b.addInstallArtifact(exe, .{
+            .dest_dir = .{ .override = .{ .custom = try std.fmt.allocPrint(
+                b.allocator, "{s}-{s}", .{ @tagName(query.cpu_arch.?), @tagName(query.os_tag.?) }
+            ) } },
+        });
+        b.getInstallStep().dependOn(&install.step);
+    }
+}`)}
+
+<p>A single <code>zig build</code> now produces four binaries in distinctly named subdirectories of <code>zig-out</code>. This pattern is how many projects publish release tarballs.</p>
+
+<h2>Cross-compiling C code</h2>
+<p>Zig bundles libc headers for major systems. When your project links against C code, those headers are picked up automatically for the chosen target. You don't install cross-toolchains; Zig <em>is</em> the cross-toolchain.</p>
+
+${tip('To see what triple your current build is using, run <code>zig env</code>. The <code>target</code> field shows the fully resolved target including CPU features.')}
+
+<h2>Static vs dynamic linking</h2>
+<p>On Linux, the <code>musl</code> ABI produces statically-linked binaries with no external libc dependency. This is ideal for distribution: one binary runs on any Linux glibc version. The <code>gnu</code> ABI links dynamically against glibc, which is faster for some workloads but requires the target system to have a compatible glibc version.</p>
+
+${warn('macOS targets require Apple SDK headers for certain features (CoreFoundation, IOKit, etc.). For pure ANSI C and Zig std, no extra SDK is needed; for system framework access, you may need to provide an SDK path.')}
+
+<h2>Try it: release one tiny binary</h2>
+<p>Pick the hello-world project and build it for your host plus one other target. Record the exact target triple and optimization mode in a <code>RELEASE_NOTES.md</code> scratch file.</p>
+${sh(`zig build -Doptimize=ReleaseSmall
+zig build -Dtarget=x86_64-linux-musl -Doptimize=ReleaseSmall
+find zig-out -type f -perm -111 -maxdepth 4`)}
+<p>The exercise is not the binary; it is noticing which parts of your program were host assumptions and which parts were portable Zig.</p>

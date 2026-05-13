@@ -1,0 +1,111 @@
+<p>Zig's generics are not a separate feature. They are the natural consequence of <code>type</code> being a value: a generic function is just a function with a <code>comptime T: type</code> parameter, and a generic type is a function that returns a type.</p>
+
+<h2>Generic functions</h2>
+<p>A function that works for any <code>T</code>:</p>
+${z(`fn max(comptime T: type, a: T, b: T) T {
+    return if (a > b) a else b;
+}
+
+const m1 = max(i32, 3, 7);        // 7
+const m2 = max(f64, 1.5, 2.5);    // 2.5
+const m3 = max(u8, 'a', 'z');     // 'z'`)}
+<p>Each call site specializes the function for its <code>T</code>. The compiler emits separate code for each instantiation, like C++ templates, but the source is just Zig.</p>
+
+<h2>Inferring the type</h2>
+<p>It would be tedious to write <code>max(i32, ...)</code> every time. Use <code>anytype</code> to let the compiler infer:</p>
+${z(`fn max(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    return if (a > b) a else b;
+}
+
+const m = max(3, 7); // i32 by default
+const f = max(@as(f64, 1.5), 2.5);`)}
+<p><code>anytype</code> means "any type, inferred from the argument." <code>@TypeOf(a)</code> reads the inferred type back out. This is the idiomatic shape of polymorphic helpers in the stdlib.</p>
+
+<h2>Generic types</h2>
+<p>A function returning a struct produces a generic container:</p>
+${z(`fn Stack(comptime T: type) type {
+    return struct {
+        items: []T,
+        len: usize,
+
+        const Self = @This();
+
+        pub fn init(allocator: std.mem.Allocator, capacity: usize) !Self {
+            return .{
+                .items = try allocator.alloc(T, capacity),
+                .len = 0,
+            };
+        }
+
+        pub fn push(self: *Self, value: T) !void {
+            if (self.len >= self.items.len) return error.Overflow;
+            self.items[self.len] = value;
+            self.len += 1;
+        }
+
+        pub fn pop(self: *Self) ?T {
+            if (self.len == 0) return null;
+            self.len -= 1;
+            return self.items[self.len];
+        }
+    };
+}
+
+const IntStack = Stack(i32);
+const StrStack = Stack([]const u8);`)}
+<p>Two essential idioms here. <code>@This()</code> inside a struct evaluates to the struct type itself; aliasing it to <code>Self</code> keeps methods readable. And calling <code>Stack(i32)</code> at module top-level is fine — it runs at comptime and produces a concrete type you can use anywhere.</p>
+
+<h2>The type-as-namespace trick</h2>
+<p>Because the struct returned by a generic-type function captures its <code>comptime</code> arguments, you can reference them throughout its methods. They become "type parameters" without any special syntax:</p>
+${z(`fn Buffer(comptime T: type, comptime N: usize) type {
+    return struct {
+        data: [N]T = undefined,
+        len: usize = 0,
+
+        const Self = @This();
+        pub fn push(self: *Self, x: T) !void {
+            if (self.len >= N) return error.Full;
+            self.data[self.len] = x;
+            self.len += 1;
+        }
+    };
+}
+
+const Buf16 = Buffer(u8, 16);`)}
+<p>Inside <code>push</code>, <code>N</code> and <code>T</code> are still in scope — they're <code>comptime</code> parameters of the surrounding function. The compiler bakes them into the generated code.</p>
+
+<h2>Constraints with comptime checks</h2>
+<p>Zig has no trait system. To constrain a type, you write a check in comptime that <code>@compileError</code>s if the type doesn't satisfy it:</p>
+${z(`fn requireIterator(comptime T: type) void {
+    if (!@hasDecl(T, "next")) @compileError(@typeName(T) ++ " has no next() method");
+}
+
+fn consume(iterator: anytype) void {
+    requireIterator(@TypeOf(iterator));
+    while (iterator.next()) |item| process(item);
+}`)}
+<p>This is duck typing with a clear error message. Less expressive than traits, more flexible in everyday code.</p>
+
+<h2>Caching: same args → same type</h2>
+<p>Zig caches type-returning function calls. <code>Stack(i32)</code> called twice yields the same type, not two different types that happen to be equivalent:</p>
+${z(`comptime {
+    std.debug.assert(Stack(i32) == Stack(i32)); // true, same type
+}`)}
+<p>This means you can use generic instantiations as keys, store them in tables, compare them — they're stable.</p>
+
+<h2>The Iterator pattern</h2>
+<p>The stdlib uses a consistent shape for iterators:</p>
+${z(`pub fn Iter(comptime T: type) type {
+    return struct {
+        items: []const T,
+        idx: usize = 0,
+
+        const Self = @This();
+        pub fn next(self: *Self) ?T {
+            if (self.idx >= self.items.len) return null;
+            defer self.idx += 1;
+            return self.items[self.idx];
+        }
+    };
+}`)}
+<p>Any type with a <code>next() ?T</code> method is an iterator. Range-friendly with <code>while (it.next()) |x|</code>. No interface declaration, no opt-in — just the shape.</p>

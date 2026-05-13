@@ -1,0 +1,142 @@
+<p>The <code>struct</code> is Zig's main composite type. It is what you use for records, modules, classes (such as they are), and namespaces. The same keyword does all those jobs because they're really the same thing.</p>
+
+<h2>Basic struct</h2>
+${z(`const Point = struct {
+    x: f32,
+    y: f32,
+};
+
+const p: Point = .{ .x = 3.0, .y = 4.0 };
+const q = Point{ .x = 1.0, .y = 2.0 };
+
+std.debug.print("{} {}\\n", .{ p.x, p.y });`)}
+<p>You access fields with <code>.</code> and initialize with <code>.{ ... }</code>. The shorthand <code>.{ ... }</code> without a type before it is an anonymous struct literal that takes the type from context.</p>
+
+<h2>Default field values</h2>
+${z(`const Config = struct {
+    timeout_ms: u32 = 5000,
+    retries: u8 = 3,
+    name: []const u8 = "default",
+};
+
+const c: Config = .{}; // all defaults
+const d: Config = .{ .timeout_ms = 10_000 }; // override one`)}
+
+<h2>Methods</h2>
+<p>Methods are just functions inside the struct declaration. The first parameter is conventionally <code>self</code>:</p>
+${z(`const Point = struct {
+    x: f32,
+    y: f32,
+
+    pub fn add(self: Point, other: Point) Point {
+        return .{ .x = self.x + other.x, .y = self.y + other.y };
+    }
+
+    pub fn scale(self: *Point, factor: f32) void {
+        self.x *= factor;
+        self.y *= factor;
+    }
+
+    pub fn length(self: Point) f32 {
+        return @sqrt(self.x * self.x + self.y * self.y);
+    }
+};
+
+var p: Point = .{ .x = 3, .y = 4 };
+const len = p.length();           // 5.0
+const sum = p.add(.{ .x = 1, .y = 1 });
+p.scale(2.0);`)}
+<p>By value (<code>self: Point</code>) for read-only methods; by pointer (<code>self: *Point</code>) for mutating methods. Method-call syntax <code>p.method()</code> is sugar for <code>Point.method(p, ...)</code> with automatic <code>&</code> if the method takes a pointer.</p>
+
+<h2>Static methods and namespaces</h2>
+<p>A function inside a struct that doesn't take <code>self</code> is a "static" function — but really it's just a function in the struct's namespace:</p>
+${z(`const Point = struct {
+    x: f32,
+    y: f32,
+
+    pub const origin: Point = .{ .x = 0, .y = 0 };
+
+    pub fn init(x: f32, y: f32) Point {
+        return .{ .x = x, .y = y };
+    }
+};
+
+const o = Point.origin;
+const p = Point.init(3, 4);`)}
+<p>Constants, types, and functions can all sit inside a struct declaration. This is how you build Zig "modules": a file is itself a struct, and its top-level declarations are its members.</p>
+
+<h2>Files are structs</h2>
+<p>The most important thing in this chapter. When you write <code>const std = @import("std");</code>, the result is a <code>type</code> — specifically, the struct type of <code>std</code>'s root file. Members of the file are members of the struct.</p>
+${z(`// math.zig
+pub const PI: f64 = 3.141592653589793;
+
+pub const Circle = struct {
+    radius: f64,
+    pub fn area(self: Circle) f64 { return PI * self.radius * self.radius; }
+};
+
+pub fn double(x: f64) f64 { return x * 2; }`)}
+
+${z(`// main.zig
+const math = @import("math.zig");
+
+const c: math.Circle = .{ .radius = 5 };
+const a = c.area();
+const pi = math.PI;`)}
+
+<p>This is the entire module system. There is no <code>module</code> keyword, no manifest of exports, no <code>export default</code>. A file is a struct; <code>pub</code> declarations are its public members.</p>
+
+<h2>Anonymous structs</h2>
+<p>You can use <code>.{ ... }</code> wherever a struct value is expected. If there's no type to infer from, the literal has an anonymous type:</p>
+${z(`fn printPair(p: anytype) void {
+    std.debug.print("{} {}\\n", .{ p.x, p.y });
+}
+
+printPair(.{ .x = 3, .y = 4 });
+printPair(.{ .x = "hello", .y = "world" });`)}
+
+<h2>Tuples</h2>
+<p>An anonymous struct literal with only positional fields is a <em>tuple</em>:</p>
+${z(`const t = .{ 1, "two", 3.0 };
+const a = t[0];
+const b = t[1];
+const c = t.@"2"; // also works`)}
+<p>Tuples are mainly useful as the argument list for variadic-like functions (which is exactly how <code>std.debug.print</code> uses them) and for ad-hoc grouping.</p>
+
+<h2>Memory layout and packed</h2>
+<p>By default Zig is free to reorder fields and choose padding. If you need a specific layout (for hardware registers, network protocols, FFI), use <code>extern struct</code> for C-compatible layout or <code>packed struct</code> for bit-level packing:</p>
+${z(`const Header = extern struct {
+    magic: u32,
+    version: u16,
+    flags: u16,
+};
+
+const Bits = packed struct(u32) {
+    op: u4,
+    reg: u4,
+    addr: u24,
+};
+
+const b: Bits = .{ .op = 1, .reg = 2, .addr = 0x123456 };
+const as_int: u32 = @bitCast(b);`)}
+<p><code>packed struct(T)</code> requires fields to total exactly the width of the backing integer <code>T</code>. We'll cover both in detail in Chapter 33.</p>
+
+<h2>@This()</h2>
+<p>Inside a struct declaration, <code>@This()</code> returns the type itself. This is how generic structs refer to their own type without naming it:</p>
+${z(`fn LinkedList(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        head: ?*Node = null,
+
+        const Node = struct {
+            value: T,
+            next: ?*Node = null,
+        };
+
+        pub fn push(self: *Self, n: *Node) void {
+            n.next = self.head;
+            self.head = n;
+        }
+    };
+}`)}
+<p><code>@This()</code> is the only way to get the enclosing struct's type when the struct is anonymous (as inside <code>fn LinkedList(...) type { return struct { ... }; }</code>).</p>

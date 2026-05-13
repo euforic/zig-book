@@ -1,0 +1,88 @@
+<p>An <code>enum</code> in Zig is a type whose values are a finite set of named tags. The tags can have explicit integer values; the type can have methods. Compared to C-style enums, Zig's are namespaced, exhaustively switchable, and resistant to silent integer arithmetic.</p>
+
+<h2>Basic enum</h2>
+${z(`const Color = enum { red, green, blue };
+
+const c: Color = .red;
+const c2 = Color.green;
+
+std.debug.print("{s}\\n", .{@tagName(c)}); // "red"`)}
+<p>Tags are accessed by namespace (<code>Color.red</code>) or, when the type is known from context, by the <code>.tag</code> shorthand.</p>
+
+<h2>Tag values</h2>
+<p>You can specify the underlying integer type and per-tag values:</p>
+${z(`const Status = enum(u8) {
+    ok = 0,
+    not_found = 404,
+    server_error = 500,
+};
+
+const s: Status = .not_found;
+const code: u8 = @intFromEnum(s);            // 404
+const back: Status = @enumFromInt(@as(u8, 500)); // .server_error`)}
+<p>The backing integer can be any integer type. If you don't specify, Zig picks the smallest unsigned type that fits all tags.</p>
+
+<h2>Switching on enums</h2>
+<p>Exhaustive matching is the typical use case:</p>
+${z(`fn name(c: Color) []const u8 {
+    return switch (c) {
+        .red => "red",
+        .green => "green",
+        .blue => "blue",
+    };
+}`)}
+<p>Add a tag and every existing <code>switch</code> will fail to compile until you handle it. This is one of the great pleasures of Zig.</p>
+
+<h2>Methods on enums</h2>
+${z(`const Direction = enum {
+    north, east, south, west,
+
+    pub fn opposite(self: Direction) Direction {
+        return switch (self) {
+            .north => .south,
+            .south => .north,
+            .east => .west,
+            .west => .east,
+        };
+    }
+
+    pub fn isVertical(self: Direction) bool {
+        return self == .north or self == .south;
+    }
+};
+
+const d: Direction = .north;
+const o = d.opposite();         // .south
+const v = d.isVertical();        // true`)}
+
+<h2>Non-exhaustive enums</h2>
+<p>An enum declared with <code>_</code> as a final tag is "open" — values outside the named tags are valid:</p>
+${z(`const HttpStatus = enum(u16) {
+    ok = 200,
+    not_found = 404,
+    server_error = 500,
+    _,
+};
+
+const future: HttpStatus = @enumFromInt(@as(u16, 418));
+switch (future) {
+    .ok, .not_found, .server_error => {},
+    _ => std.debug.print("unknown status\\n", .{}),
+}`)}
+<p>Use these for things like syscall numbers or HTTP statuses where the spec is open-ended.</p>
+
+<h2>Enums and integer literals</h2>
+<p>You cannot mix enum values and integers without explicit conversion. Adding 1 to a <code>Color</code> is not a thing; you must <code>@intFromEnum</code> first if that's really what you want.</p>
+
+${tip("Enum vs union(enum)", "<p style=\"margin:0\">If your tags need to carry per-tag data, you want a tagged union (next chapter), not a plain enum.</p>")}
+
+<h2>Implicit enum literals</h2>
+<p>When the expected type is an enum, you can write just the dot-prefixed tag name:</p>
+${z(`fn setColor(c: Color) void { _ = c; }
+
+setColor(.red);                  // .red infers as Color.red
+const arr = [_]Color{ .red, .green }; // each .red infers from the array type`)}
+<p>This makes enum-heavy code dramatically less noisy than C-style fully qualified names.</p>
+
+<h2>The errortype family</h2>
+<p>Zig's error sets are a kind of enum — see Part V. The connection is more than cosmetic; under the hood, an error value is an integer index into a global error table.</p>

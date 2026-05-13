@@ -1,0 +1,109 @@
+<p>Zig 0.16's headline change is <strong>I/O as an interface</strong>. <code>std.Io</code> is now the standard-library boundary for filesystem work, processes, networking, clocks, randomness, sleeping, structured concurrency, and synchronization primitives. Code that does those things should accept an <code>io: std.Io</code> parameter, just like allocation-heavy code accepts an <code>allocator: std.mem.Allocator</code>.</p>
+
+<p>The practical result: libraries no longer hard-code "blocking syscall", "thread pool", or "event loop". The caller supplies the I/O implementation. Your function says what it needs to do; the application decides how operations are scheduled.</p>
+
+<h2>Juicy main</h2>
+<p>The usual 0.16 entry point accepts <code>std.process.Init</code>. It gives you a default allocator, process-lifetime arena, command-line arguments, environment variables, preopened files, and an appropriate <code>std.Io</code> implementation:</p>
+${z(`const std = @import("std");
+
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+
+    try std.Io.File.stdout().writeStreamingAll(io, "Hello from std.Io\\n");
+
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    for (args, 0..) |arg, i| {
+        std.log.info("arg[{d}] = {s}", .{ i, arg });
+    }
+}`)}
+
+${note("Empty main still exists", "<p style=\"margin:0\"><code>pub fn main() !void</code> is still legal, but it intentionally gives you no access to argv, env vars, the default process arena, or the process-selected <code>std.Io</code>. For real programs, prefer <code>std.process.Init</code>.</p>")}
+
+<h2>Reader and Writer</h2>
+<p><code>std.Io.Reader</code> and <code>std.Io.Writer</code> are buffered interface values. Their methods operate on the interface itself; the <code>io</code> handle lives in concrete producers like files, sockets, directories, and process APIs.</p>
+${z(`fn copyAll(src: *std.Io.Reader, dst: *std.Io.Writer) !void {
+    _ = try src.streamRemaining(dst);
+    try dst.flush();
+}
+
+fn formatIntoBuffer() ![]const u8 {
+    var buffer: [128]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try writer.print("{s}: {d}\\n", .{ "count", 42 });
+    return writer.buffered();
+}`)}
+
+<p>Writers buffer aggressively. If the destination is a file, socket, terminal, or pipe, call <code>flush()</code> before assuming bytes reached the outside world. Allocating writers are the exception: they grow memory and do not need flushing.</p>
+
+<h2>Fixed memory sources and sinks</h2>
+${z(`var reader = std.Io.Reader.fixed("name=zig\\n");
+const key = try reader.takeDelimiterExclusive('=');
+const value = try reader.takeDelimiterExclusive('\\n');
+
+var out_buf: [64]u8 = undefined;
+var out = std.Io.Writer.fixed(&out_buf);
+try out.print("{s} -> {s}", .{ key, value });
+const written = out.buffered();`)}
+
+<h2>Files produce file readers and writers</h2>
+${z(`pub fn readAndEcho(init: std.process.Init) !void {
+    const io = init.io;
+    const cwd = std.Io.Dir.cwd();
+
+    const file = try cwd.openFile(io, "data.txt", .{});
+    defer file.close(io);
+
+    var read_buf: [4096]u8 = undefined;
+    var file_reader = file.reader(io, &read_buf);
+
+    var write_buf: [4096]u8 = undefined;
+    var stdout = std.Io.File.stdout().writerStreaming(io, &write_buf);
+    defer stdout.interface.flush() catch {};
+
+    _ = try file_reader.interface.streamRemaining(&stdout.interface);
+}`)}
+
+<p>Notice the layering: <code>std.Io.File</code> owns the OS handle; <code>file.reader(io, buffer)</code> creates a concrete file reader; <code>file_reader.interface</code> is the generic <code>*std.Io.Reader</code> you pass into parsing and streaming code.</p>
+
+<h2>Future and Group</h2>
+<p><code>std.Io.async</code> returns a <code>Future(T)</code>. <code>std.Io.Group</code> owns multiple <code>Cancelable!void</code> tasks and waits for them as a unit. Use these when you need structured concurrent I/O work.</p>
+${z(`fn fetchAll(io: std.Io, urls: []const []const u8) !void {
+    var group: std.Io.Group = .init;
+    errdefer group.cancel(io);
+
+    for (urls) |url| {
+        group.async(io, fetchOne, .{ io, url });
+    }
+
+    try group.await(io);
+}
+
+fn fetchOne(io: std.Io, url: []const u8) std.Io.Cancelable!void {
+    _ = io;
+    _ = url;
+    // network work goes here
+}`)}
+
+<p>Calling <code>await</code> or <code>cancel</code> releases the group's resources. If a function can fail after spawning work, use <code>errdefer group.cancel(io)</code> so spawned tasks do not outlive the scope accidentally.</p>
+
+<h2>Cancellation, sleep, time, and entropy</h2>
+<p>Cancellation is integrated into I/O operations. Sleep, filesystem calls, process waits, network operations, and many synchronization operations can return <code>error.Canceled</code>. Randomness also moved to <code>std.Io</code>:</p>
+${z(`try std.Io.sleep(io, .fromMilliseconds(250), .awake);
+
+var bytes: [32]u8 = undefined;
+io.random(&bytes);              // may use process-local RNG state
+try io.randomSecure(&bytes);    // always asks outside the process`)}
+
+<h2>Implementations</h2>
+<p>The standard library exposes concrete implementations such as <code>std.Io.Threaded</code> and platform evented backends via <code>std.Io.Evented</code>. Most applications should start with the <code>io</code> provided by <code>std.process.Init</code>. Reach for an explicit implementation when you are writing a runtime, benchmark harness, server framework, or test environment that must control scheduling policy.</p>
+
+<h2>Everyday shape</h2>
+<ul>
+  <li>Accept <code>io: std.Io</code> in code that touches the OS, waits, sleeps, spawns processes, or requests entropy.</li>
+  <li>Use <code>std.Io.Dir</code> and <code>std.Io.File</code> for filesystem handles.</li>
+  <li>Pass <code>io</code> to methods that may perform I/O: <code>file.close(io)</code>, <code>dir.openFile(io, ...)</code>, <code>child.wait(io)</code>.</li>
+  <li>Use <code>std.Io.async</code>, <code>std.Io.Future</code>, and <code>std.Io.Group</code> for structured concurrent I/O work.</li>
+  <li>Use <code>std.process.Init</code> for real program entry points and <code>io.random</code> / <code>io.randomSecure</code> for randomness.</li>
+</ul>
+
+${tip("Reader/Writer aren't just for files", "<p style=\"margin:0\">Any byte sink or source can implement Reader/Writer. The pattern shows up in compression, encryption, hashing, JSON streaming — anywhere you have bytes flowing through a pipeline. This is the abstraction that lets you snap those pieces together without copies.</p>")}

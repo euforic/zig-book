@@ -1,0 +1,95 @@
+<p>When something goes wrong, Zig gives you a lot. Safety builds catch undefined behavior at runtime with a labeled panic. The compiler embeds DWARF debug info so a real debugger can step through your code. Logs route through a configurable backend. And in 0.16, stack traces are noticeably better across every target.</p>
+
+<h2>Panics</h2>
+<p>A panic is the runtime equivalent of "something the language said could never happen, just happened." Common triggers: integer overflow in a Debug build, OOB array access, unreachable code reached, slicing with bad bounds, hitting an explicit <code>@panic</code>.</p>
+
+${code('text', `thread 1234 panic: integer overflow
+/home/me/project/src/main.zig:42:18: 0x10043ab in tally (main)
+    total += value;
+                 ^
+/home/me/project/src/main.zig:30:13: 0x100456c in main (main)
+    tally(items);
+            ^`)}
+
+<p>The trace shows file, line, column, mangled function name, and the offending source line. On supported targets, parent frames are included so you can follow the call path to the failing operation.</p>
+
+<h2>Error return traces</h2>
+<p>Errors thread through <code>try</code> propagation. When an error reaches a boundary that prints it, the runtime can show the chain of returns that produced it — useful when a deep helper failed and you want to see the path:</p>
+
+${code('text', `error: PermissionDenied
+/home/me/project/src/fs.zig:88:9: 0x10059aa in readFile
+        return error.PermissionDenied;
+        ^
+/home/me/project/src/config.zig:42:14: 0x1004e21 in loadConfig
+    const data = try readFile(path);
+                 ^
+/home/me/project/src/main.zig:12:5: 0x10046cd in main
+    try loadConfig("settings.toml");
+    ^`)}
+
+${note('Error return traces are enabled by default in Debug and ReleaseSafe. In ReleaseFast/ReleaseSmall they\\u2019re elided for performance. If you want them in fast builds, use <code>std.builtin.optimize_mode</code> conditionally or build with <code>-fno-strip</code>.')}
+
+<h2>Using a debugger</h2>
+<p>Zig binaries include DWARF debug info by default in Debug builds. GDB and LLDB work out of the box:</p>
+
+${sh(`# Compile with maximum debug info
+zig build -Doptimize=Debug
+
+# Launch under lldb
+lldb zig-out/bin/myapp
+
+# In lldb:
+# b src/main.zig:42      # breakpoint by file/line
+# r                       # run
+# n                       # next line
+# s                       # step into
+# p variable_name         # print a value
+# bt                      # backtrace`)}
+
+<p>For GDB the commands are similar (<code>break</code>, <code>run</code>, <code>next</code>, <code>step</code>, <code>print</code>, <code>backtrace</code>). VS Code with the CodeLLDB extension gives you graphical stepping.</p>
+
+<h2>Inspecting Zig types in a debugger</h2>
+<p>Tagged unions, slices, and optionals have natural representations:</p>
+<ul>
+  <li>A slice prints as <code>{ ptr = 0x..., len = N }</code>. Use <code>p mySlice.ptr[0]</code> to inspect contents.</li>
+  <li>An optional is <code>{ payload = ..., is_some = 1 }</code> or similar; check the discriminant first.</li>
+  <li>A tagged union shows the active variant. <code>p u.case_name.field</code> pulls out the data.</li>
+</ul>
+
+<h2>std.log</h2>
+<p>Routing diagnostic output through a real logger is more maintainable than ad-hoc <code>print</code> calls:</p>
+
+${z(`const std = @import("std");
+const log = std.log.scoped(.parser);
+
+pub fn parse(input: []const u8) !void {
+    log.debug("parsing {d} bytes", .{input.len});
+    if (input.len == 0) {
+        log.warn("empty input", .{});
+        return error.Empty;
+    }
+    // ...
+}`)}
+
+<p>Scopes (<code>std.log.scoped(.name)</code>) tag messages so you can filter by subsystem. Levels (<code>err</code>, <code>warn</code>, <code>info</code>, <code>debug</code>) control verbosity. The default backend writes to stderr; override <code>std.log.defaultLog</code> for custom destinations (a file, a ring buffer, a remote sink).</p>
+
+<h2>std.debug.print</h2>
+<p>For quick "just print it" debugging, <code>std.debug.print(fmt, args)</code> writes formatted text to stderr unconditionally. It bypasses logger configuration, so it always shows up. Use it for one-shot investigation, then promote to <code>std.log</code> for keeps.</p>
+
+<h2>Sanitizers and safety modes</h2>
+<p>Zig's safety checks <em>are</em> sanitizers, baked into the language. Debug and ReleaseSafe builds include checks for:</p>
+<ul>
+  <li>Integer overflow (use <code>+%</code>, <code>-%</code>, <code>*%</code> for wrapping arithmetic when you want it).</li>
+  <li>Bounds violations on arrays and slices.</li>
+  <li>Misaligned pointer casts.</li>
+  <li>Reaching <code>unreachable</code>.</li>
+  <li>Invalid enum tags.</li>
+</ul>
+<p>You don't need ASan or UBSan — for the most common classes of memory and arithmetic bugs, Zig's own checks are equivalent and bundled in.</p>
+
+${tip('If a panic message points at a line but the cause is upstream, look at the values in the trace. Many panics ("integer overflow", "index out of bounds") name the operation but not the inputs. <code>std.debug.print</code> the relevant variables one frame up, or break in a debugger.')}
+
+<h2>strace and dtrace</h2>
+<p>For system-level debugging — "why is this syscall failing?" — Zig binaries are normal native binaries. <code>strace</code> on Linux, <code>dtruss</code> on macOS, and <code>Process Monitor</code> on Windows all work without modification.</p>
+
+${warn('In ReleaseFast and ReleaseSmall, integer overflow is undefined behavior. The compiler may assume it does not happen and optimize accordingly. If your code depends on wrapping semantics, use the <code>+%</code> family of operators explicitly so the behavior is portable across optimization modes.')}

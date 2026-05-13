@@ -1,0 +1,63 @@
+<p>Zig has no exceptions. A function that can fail returns an <em>error union</em>, and errors themselves are values drawn from <strong>error sets</strong> — enum-like collections of error names. The type system tracks exactly which errors a function can produce, and the compiler will complain if you forget to handle one.</p>
+
+<p>This sounds heavy. In practice it's lightweight: most of the time you write <code>!T</code>, let inference figure out the error set, and use <code>try</code> to propagate. The full mechanism is there when you need it.</p>
+
+<h2>Declaring an error set</h2>
+<p>An error set is a type. Declare one with <code>error { ... }</code>:</p>
+${z(`const FileError = error{
+    NotFound,
+    PermissionDenied,
+    DiskFull,
+};
+
+fn open(path: []const u8) FileError!File {
+    _ = path;
+    return error.NotFound;
+}`)}
+<p>Inside a function, <code>error.NotFound</code> creates a value of that error. The set type written before the <code>!</code> says which errors the function can return.</p>
+
+<h2>The global error set</h2>
+<p>Every error name you mention anywhere in your program participates in a single, program-wide implicit set. The type <code>anyerror</code> represents that whole set — any error from anywhere:</p>
+${z(`fn anything() anyerror!void {
+    return error.SomethingBroke;
+}`)}
+<p><code>anyerror</code> is convenient but lossy: callers no longer know exactly what can fail. Reserve it for very generic interfaces. Most functions should have a precise set, or simply let it be inferred.</p>
+
+${note("anyerror is a fallback", "<p style=\"margin:0\">Treat <code>anyerror</code> like <code>any</code> in TypeScript or <code>Box&lt;dyn Error&gt;</code> in Rust: useful as glue, harmful as default. Precise sets are documentation the compiler enforces.</p>")}
+
+<h2>Inferred error sets</h2>
+<p>Write <code>!T</code> without naming a set, and Zig infers the set from the function body:</p>
+${z(`fn parse(s: []const u8) !i32 {
+    if (s.len == 0) return error.Empty;
+    if (s[0] == '-') return error.Negative;
+    return @intCast(s[0] - '0');
+}`)}
+<p>The inferred set is exactly <code>error{Empty,Negative}</code> plus whatever the body's <code>try</code> expressions can return. This is the most common form — explicit sets are for public APIs where you want stability.</p>
+
+<h2>Set algebra</h2>
+<p>Error sets compose. The <code>||</code> operator merges sets:</p>
+${z(`const ParseError = error{ Empty, BadDigit };
+const IoError = error{ NotFound, PermissionDenied };
+
+const AllError = ParseError || IoError;
+// AllError == error{ Empty, BadDigit, NotFound, PermissionDenied }`)}
+<p>If an error name appears in both, it appears once in the union. There's also a subset check: <code>SmallSet</code> coerces to <code>BigSet</code> automatically when every variant fits.</p>
+
+<h2>switch on errors</h2>
+<p>You can switch on an error value as if it were an enum:</p>
+${z(`fn classify(err: FileError) []const u8 {
+    return switch (err) {
+        error.NotFound => "missing",
+        error.PermissionDenied => "forbidden",
+        error.DiskFull => "out of space",
+    };
+}`)}
+<p>The switch must be exhaustive over the set — leave a case off and the compiler will tell you.</p>
+
+<h2>Error sets are types, not enums</h2>
+<p>Error names are global to the program: every <code>error.NotFound</code> refers to the same value, regardless of which set declared it. Sets are just type-level filters that say which subset of names a function admits.</p>
+${z(`const A = error{ X };
+const B = error{ X };
+
+// A.X == B.X — same value, two filters over it.`)}
+<p>This means error names are cheap and you should not feel bad about reusing common ones (<code>OutOfMemory</code>, <code>InvalidInput</code>, <code>EndOfStream</code>) across modules. The standard library does exactly this.</p>

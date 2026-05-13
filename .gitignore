@@ -1,0 +1,24 @@
+.DS_Store
+book.js
+.zig-cache/
+zig-out/
+dist/
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local scratch output
+tmp/
+scratch/
+*.tmp
+*.log
+
+# OS metadata
+Thumbs.db

@@ -1,0 +1,124 @@
+<p>Zig's standard containers live mostly in <code>std.array_list</code>, <code>std.hash_map</code>, <code>std.array_hash_map</code>, and the linked-list modules. The important 0.16 lesson is that container ownership is explicit: some containers store an allocator, some make you pass one to mutation methods, and you should know which kind you are holding.</p>
+
+${note("Allocator ownership is part of the type", "<p style=\"margin:0\"><code>std.ArrayList(T)</code>, <code>std.array_hash_map.Auto</code>, <code>std.PriorityQueue</code>, and <code>std.PriorityDequeue</code> use <code>.empty</code> plus allocator-at-call-site methods. <code>std.AutoHashMap</code> and <code>std.StringHashMap</code> store an allocator; use their <code>Unmanaged</code> variants when you want allocator-at-call-site behavior.</p>")}
+
+<h2>ArrayList: the dynamic array</h2>
+${z(`const std = @import("std");
+
+pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var list: std.ArrayList(u32) = .empty;
+    defer list.deinit(allocator);
+
+    try list.append(allocator, 1);
+    try list.append(allocator, 2);
+    try list.append(allocator, 3);
+
+    for (list.items) |x| std.debug.print("{}\\n", .{x});
+}`)}
+<p>Notice the <code>allocator</code> at every mutation. <code>list.items</code> is a plain <code>[]T</code> slice — pass it to any function that takes a slice. <code>list.capacity</code> is the backing capacity.</p>
+
+<h2>Common ArrayList operations</h2>
+${z(`try list.append(allocator, x);
+try list.appendSlice(allocator, &[_]u32{4,5,6});
+try list.insert(allocator, idx, x);
+const popped = list.pop();              // ?T
+const last = list.getLast();            // T (asserts not empty)
+list.clearRetainingCapacity();          // length=0, capacity kept
+list.clearAndFree(allocator);            // free buffer
+
+try list.ensureTotalCapacity(allocator, 1024);  // reserve
+list.appendAssumeCapacity(x);                    // skip the check
+try list.resize(allocator, 100);                 // grow or shrink`)}
+<p>The <code>AssumeCapacity</code> variants are the way to write hot loops: ensure once, append-without-realloc-check thousands of times.</p>
+
+<h2>Stack-backed ArrayList</h2>
+<p>For a fixed-capacity dynamic list, initialize an <code>ArrayList</code> from a caller-provided buffer:</p>
+${z(`var storage: [16]u32 = undefined;
+var small: std.ArrayList(u32) = .initBuffer(&storage);
+
+try small.appendBounded(10);
+try small.appendBounded(20);
+
+// No allocator, no heap; appending past capacity returns error.OutOfMemory.
+for (small.items) |x| std.debug.print("{}\\n", .{x});`)}
+
+<h2>HashMap: keys to values</h2>
+${z(`var map = std.AutoHashMap(u32, []const u8).init(allocator);
+defer map.deinit();
+
+try map.put(1, "one");
+try map.put(2, "two");
+
+if (map.get(1)) |v| std.debug.print("{s}\\n", .{v});
+if (map.contains(2)) {}
+
+var it = map.iterator();
+while (it.next()) |entry| {
+    std.debug.print("{} -> {s}\\n", .{entry.key_ptr.*, entry.value_ptr.*});
+}`)}
+<p><code>AutoHashMap</code> picks the hash and equality from the key type automatically and stores the allocator internally. There's also <code>HashMap</code> (you supply your own hash context), <code>StringHashMap</code> (a specialization for <code>[]const u8</code> keys), and <code>*Unmanaged</code> variants that take an allocator on mutating calls.</p>
+
+<h2>Hash map flavors</h2>
+<ul>
+  <li><code>AutoHashMap(K, V)</code> — key type auto-hashed; stores its allocator.</li>
+  <li><code>AutoHashMapUnmanaged(K, V)</code> — same hashing, allocator passed to mutation methods.</li>
+  <li><code>StringHashMap(V)</code> — keys are <code>[]const u8</code>; useful for parsed config, JSON, etc.</li>
+  <li><code>HashMap(K, V, Context, max_load_pct)</code> — supply your own context with <code>hash</code> and <code>eql</code> methods.</li>
+  <li><code>std.array_hash_map.Auto(K, V)</code> — order-preserving, allocator-at-call-site map.</li>
+</ul>
+
+<h2>String maps and string-as-key</h2>
+${z(`var counts = std.StringHashMap(u32).init(allocator);
+defer counts.deinit();
+
+for (words) |w| {
+    const gop = try counts.getOrPut(w);
+    if (gop.found_existing) {
+        gop.value_ptr.* += 1;
+    } else {
+        gop.value_ptr.* = 1;
+    }
+}`)}
+<p><code>getOrPut</code> is the idiomatic "increment-or-insert" primitive. It returns pointers to the slot, so you can branch on whether it existed without two lookups.</p>
+
+${warn("StringHashMap doesn't copy keys", "<p style=\"margin:0\">When you <code>put</code> a string key, the map stores the slice pointer — not a copy. If the underlying memory goes away, the key is dangling. To own the key, duplicate it first with <code>try allocator.dupe(u8, key)</code>, insert the duplicate, and free owned keys when you remove entries or deinitialize the map.</p>")}
+
+<h2>Order-preserving maps</h2>
+<p>Use <code>std.array_hash_map.Auto</code>, <code>std.array_hash_map.String</code>, or <code>std.array_hash_map.Custom</code> when iteration order matters:</p>
+${z(`var ordered: std.array_hash_map.Auto(u32, []const u8) = .empty;
+defer ordered.deinit(allocator);
+
+try ordered.put(allocator, 10, "ten");
+try ordered.put(allocator, 20, "twenty");
+
+for (ordered.keys(), ordered.values()) |key, value| {
+    std.debug.print("{} -> {s}\\n", .{ key, value });
+}`)}
+
+<h2>Other containers</h2>
+<p>The stdlib also includes:</p>
+<ul>
+  <li><code>std.MultiArrayList(S)</code> — "struct of arrays" layout for cache-friendly hot loops over fields.</li>
+  <li><code>std.SinglyLinkedList</code> / <code>std.DoublyLinkedList</code> — non-generic intrusive linked lists; put a <code>Node</code> field inside your payload.</li>
+  <li><code>std.PriorityQueue(T, Context, lessThan)</code> — binary heap; initialized with <code>.empty</code> in 0.16.</li>
+  <li><code>std.Deque(T)</code> — double-ended queue.</li>
+  <li><code>std.SegmentedList(T, chunk_size)</code> — list that never invalidates pointers on growth.</li>
+</ul>
+
+<h2>Iteration patterns</h2>
+${z(`// Index plus value (built-in trick)
+for (list.items, 0..) |x, i| {
+    std.debug.print("[{}] = {}\\n", .{i, x});
+}
+
+// Remove while iterating: collect indices, then remove
+var to_remove: std.ArrayList(usize) = .empty;
+defer to_remove.deinit(allocator);
+for (list.items, 0..) |x, i| if (x == 0) try to_remove.append(allocator, i);
+var j = to_remove.items.len;
+while (j > 0) { j -= 1; _ = list.orderedRemove(to_remove.items[j]); }`)}
+<p>Removing while iterating is a perennial Zig gotcha — the slice from <code>.items</code> doesn't update if you mutate. Collect indices first.</p>

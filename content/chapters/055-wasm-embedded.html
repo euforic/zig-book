@@ -1,0 +1,156 @@
+<p>Zig was designed to be useful from kernels to browsers. The freestanding targets — WebAssembly, microcontrollers, kernel-mode code — drop the standard library's OS-dependent pieces and let you build what you need from primitives. This chapter walks the two most common cases: shipping Zig to the browser, and shipping it to bare-metal embedded.</p>
+
+<h2>WebAssembly basics</h2>
+<p>WebAssembly comes in two main flavors from Zig's perspective:</p>
+<ul>
+  <li><code>wasm32-wasi</code> — runs in WASI-compatible environments (Wasmtime, Wasmer, Node with --experimental-wasi, browsers via polyfills). File I/O, stdout, environment variables work.</li>
+  <li><code>wasm32-freestanding</code> — pure WebAssembly with no system interface. You import functions from the host (JavaScript) and export your own.</li>
+</ul>
+
+<h2>A browser-targeted module</h2>
+${z(`// src/main.zig
+export fn add(a: i32, b: i32) i32 {
+    return a + b;
+}
+
+export fn greet(ptr: [*]const u8, len: usize) i32 {
+    const name = ptr[0..len];
+    // host provides print via import
+    print(name.ptr, name.len);
+    return @intCast(name.len);
+}
+
+extern "env" fn print(ptr: [*]const u8, len: usize) void;`)}
+
+${z(`// build.zig (excerpt)
+const wasm = b.addExecutable(.{
+    .name = "module",
+    .root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = b.resolveTargetQuery(.{
+            .cpu_arch = .wasm32,
+            .os_tag = .freestanding,
+        }),
+        .optimize = .ReleaseSmall,
+    }),
+});
+wasm.entry = .disabled;            // no main()
+wasm.rdynamic = true;              // expose all exports
+b.installArtifact(wasm);`)}
+
+<p>Load it from JavaScript:</p>
+
+${code('javascript', `const wasm = await WebAssembly.instantiateStreaming(fetch("module.wasm"), {
+  env: {
+    print: (ptr, len) => {
+      const bytes = new Uint8Array(wasm.instance.exports.memory.buffer, ptr, len);
+      console.log(new TextDecoder().decode(bytes));
+    }
+  }
+});
+console.log(wasm.instance.exports.add(2, 3));
+
+const encoder = new TextEncoder();
+const bytes = encoder.encode("world");
+const ptr = wasm.instance.exports.alloc(bytes.length);
+new Uint8Array(wasm.instance.exports.memory.buffer, ptr, bytes.length).set(bytes);
+wasm.instance.exports.greet(ptr, bytes.length);`)}
+
+<h2>Memory across the wasm boundary</h2>
+<p>WebAssembly modules export a linear memory buffer. To pass strings or structured data, you allocate on the wasm side, copy bytes in from JS, and pass <code>(ptr, len)</code> pairs to your exported functions. A useful pattern is to expose <code>alloc</code> and <code>free</code> exports backed by a Zig allocator:</p>
+
+${z(`var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+export fn alloc(size: usize) ?[*]u8 {
+    const slice = gpa.allocator().alloc(u8, size) catch return null;
+    return slice.ptr;
+}
+
+export fn free(ptr: [*]u8, size: usize) void {
+    gpa.allocator().free(ptr[0..size]);
+}`)}
+
+<h2>WASI: when you want a stdlib</h2>
+<p>For server-side wasm or wasm CLIs, target <code>wasm32-wasi</code>:</p>
+
+${sh(`zig build -Dtarget=wasm32-wasi
+wasmtime zig-out/bin/yourapp.wasm hello world`)}
+
+<p>You can now use <code>std.Io.Dir</code>, <code>std.process.Init</code>, allocate with the general-purpose allocator, and write to stdout through <code>std.Io.File</code>. The WASI runtime brokers those system calls.</p>
+
+<h2>Freestanding embedded targets</h2>
+<p>For microcontrollers, you typically target <code>thumb-freestanding-eabi</code> or a similar combination. There's no libc, no heap (unless you provide one), and you control the entire memory layout via a linker script.</p>
+
+${z(`// build.zig for an ARM Cortex-M4
+const target = b.resolveTargetQuery(.{
+    .cpu_arch = .thumb,
+    .cpu_model = .{ .explicit = &std.Target.arm.cpu.cortex_m4 },
+    .os_tag = .freestanding,
+    .abi = .eabi,
+});
+
+const elf = b.addExecutable(.{
+    .name = "firmware.elf",
+    .root_module = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = .ReleaseSmall,
+    }),
+});
+elf.entry = .disabled;
+elf.setLinkerScript(b.path("link.ld"));
+b.installArtifact(elf);`)}
+
+<h2>The reset handler</h2>
+<p>On bare metal, you provide the reset vector. The linker script points to it. From there, you initialize the data section, zero BSS, and call your main function.</p>
+
+${z(`export fn _start() callconv(.c) noreturn {
+    // Copy .data from flash to RAM, zero .bss
+    // ... initialization ...
+
+    main();
+
+    while (true) {
+        asm volatile ("wfi");
+    }
+}
+
+fn main() void {
+    // your firmware logic
+}`)}
+
+<h2>Memory-mapped registers</h2>
+${z(`const GPIOA_BASE: usize = 0x40020000;
+const ODR_OFFSET: usize = 0x14;
+
+inline fn reg32(addr: usize) *volatile u32 {
+    return @ptrFromInt(addr);
+}
+
+pub fn ledOn() void {
+    reg32(GPIOA_BASE + ODR_OFFSET).* |= (1 << 5);
+}
+
+pub fn ledOff() void {
+    reg32(GPIOA_BASE + ODR_OFFSET).* &= ~@as(u32, 1 << 5);
+}`)}
+
+<p>The <code>volatile</code> qualifier on the pointer prevents the optimizer from reordering or eliding loads and stores — essential for memory-mapped I/O. Packed structs make register layouts even more readable:</p>
+
+${z(`const Cr1 = packed struct(u32) {
+    ue: u1, // USART enable
+    _r1: u2,
+    te: u1, // transmit enable
+    re: u1, // receive enable
+    _r2: u27,
+};
+
+const USART1_CR1: *volatile Cr1 = @ptrFromInt(0x40011000);
+
+pub fn uartInit() void {
+    USART1_CR1.* = .{ .ue = 1, ._r1 = 0, .te = 1, .re = 1, ._r2 = 0 };
+}`)}
+
+${tip('Use <code>ReleaseSmall</code> for firmware. Code size matters more than micro-optimizations on tiny MCUs, and the result is usually competitive with hand-tuned C in performance.')}
+
+${warn('Without an OS, there\\u2019s no <code>std.debug.print</code>. Provide your own UART or RTT logging shim and route <code>std.log</code> to it. This is one of the first things to wire up in a new firmware project.')}

@@ -1,0 +1,50 @@
+<p>The type <code>!T</code> is shorthand for "the inferred error set, or a value of type <code>T</code>." Spelled long, it's <code>ErrorSet!Payload</code>. Under the hood, an error union is a tagged union: either an error code, or a payload.</p>
+
+<h2>Constructing an error union</h2>
+<p>Return either an error or a value from a function with an <code>!T</code> return:</p>
+${z(`fn half(x: i32) !i32 {
+    if (@mod(x, 2) != 0) return error.NotEven;
+    return @divExact(x, 2);
+}`)}
+<p>You don't wrap the success value in anything — it's a plain return. The error path uses <code>return error.X</code>.</p>
+
+<h2>Catching with catch</h2>
+<p>The <code>catch</code> expression unwraps an error union. If success, the expression evaluates to the payload. If error, the right-hand side runs:</p>
+${z(`const n = half(7) catch 0;          // default value on error
+const m = half(7) catch return;     // propagate (rarely; use try)
+const k = half(7) catch |e| blk: {
+    std.log.warn("half failed: {}", .{e});
+    break :blk -1;
+};`)}
+<p>The <code>|e|</code> capture names the error value so you can inspect it. Without a capture, the error is discarded.</p>
+
+<h2>try is sugar for catch-and-return</h2>
+<p>Almost every error you encounter, you want to bubble up. <code>try expr</code> is exactly <code>expr catch |e| return e</code>:</p>
+${z(`fn doubleHalf(x: i32) !i32 {
+    const h = try half(x);  // bubble up error.NotEven
+    return h * 2;
+}`)}
+<p>If <code>half</code> returns an error, <code>doubleHalf</code> returns the same error. If success, <code>h</code> binds to the payload and execution continues.</p>
+
+${tip("Almost always use try", "<p style=\"margin:0\">If you're not <em>handling</em> the error here — turning it into a different error, defaulting to a value, logging it — use <code>try</code>. Reserve <code>catch</code> for the leaf nodes of your error flow.</p>")}
+
+<h2>Error union returns and inference</h2>
+<p>When the return type is <code>!T</code>, Zig infers the error set by union-ing every error a <code>try</code> or <code>return error.X</code> could produce:</p>
+${z(`const std = @import("std");
+
+fn loadConfig(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    return try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1 << 20));
+}`)}
+<p>The inferred set includes every error <code>readFileAlloc</code> can return. You don't have to write it.</p>
+
+<h2>Coercion into wider sets</h2>
+<p>A narrow error union coerces into a wider one automatically:</p>
+${z(`fn small() error{A}!u8 { return error.A; }
+
+fn big() error{A, B}!u8 {
+    return try small(); // ok: {A} is subset of {A,B}
+}`)}
+<p>Going the other way — wide to narrow — is a compile error unless you switch on the error and reconstruct.</p>
+
+<h2>Payload size</h2>
+<p>An error union takes <code>max(sizeOfError, sizeOfPayload)</code> plus a discriminator, minus niche optimizations. Errors are typically small (16 bits or so), so <code>!T</code> rarely costs more than <code>T</code> itself.</p>

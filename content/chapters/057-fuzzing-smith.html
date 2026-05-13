@@ -1,0 +1,83 @@
+<p>Fuzzing is feeding a program random-or-mutated inputs and watching for crashes. Done well, it finds bugs that unit tests miss — edge cases nobody thought to write down. Zig 0.16 ships a built-in fuzzer called <strong>Smith</strong>. It's coverage-guided (uses compiler instrumentation to prefer inputs that explore new code paths), supports multiprocess execution, and integrates with the existing <code>test</code> mechanism.</p>
+
+<h2>Writing a fuzz target</h2>
+${z(`const std = @import("std");
+
+fn parse(input: []const u8) !void {
+    var it = std.mem.tokenizeAny(u8, input, " \\\\t\\\\n");
+    while (it.next()) |tok| {
+        _ = try std.fmt.parseInt(i64, tok, 10);
+    }
+}
+
+test "fuzz parser" {
+    const Context = struct {
+        fn run(_: @This(), input: []const u8) anyerror!void {
+            parse(input) catch |e| switch (e) {
+                error.InvalidCharacter, error.Overflow => {},
+                else => return e,
+            };
+        }
+    };
+    try std.testing.fuzz(Context{}, Context.run, .{});
+}`)}
+
+<p>The pattern is familiar: a <code>test</code> block, a function under test, and a wrapper that consumes fuzzer-provided input. The wrapper catches <em>expected</em> errors (malformed input is fine) and propagates <em>unexpected</em> ones (panics, OOB, integer overflow that wasn't supposed to happen).</p>
+
+<h2>Running the fuzzer</h2>
+${sh(`zig build test --fuzz
+
+# Or fuzz a specific test
+zig build test -Dtest-filter="fuzz parser" --fuzz
+
+# Run continuously until you kill it
+zig build test --fuzz -Dfuzz-mode=continuous
+
+# Use N parallel processes
+zig build test --fuzz -Dfuzz-workers=8`)}
+
+<p>Smith generates an initial corpus (or uses one you supply), instruments your code to record edge coverage, and mutates inputs that hit new edges. On a crash, it minimizes the input and writes a reproducer to <code>.zig-cache/fuzz/crashes/</code>.</p>
+
+<h2>0.16 improvements</h2>
+<ul>
+  <li><strong>Smith AST-aware mutator.</strong> For inputs that look like structured text, Smith maintains a generative grammar at runtime, making it likelier to hit deep parser code.</li>
+  <li><strong>Multiprocess fuzzing.</strong> Crashes in one worker don't take down the whole campaign. Workers share a corpus directory atomically.</li>
+  <li><strong>Infinite / continuous mode.</strong> Run a campaign for hours or days; intermediate corpora are persisted to disk.</li>
+  <li><strong>Crash dumps.</strong> Crashes produce both the minimized input and a structured dump (registers, stack, allocator state).</li>
+</ul>
+
+${note('Smith is integrated with the language\\u2019s safety checks. Out-of-bounds reads, signed overflow, illegal alignment, and use-after-free in safe builds all surface as fuzzer findings. You don\\u2019t need to assert manually for these — the compiler\\u2019s safety instrumentation already does.')}
+
+<h2>Building a useful corpus</h2>
+<p>A good seed corpus dramatically speeds up fuzzing. For a parser, seed with valid inputs that cover diverse features. For a binary protocol, seed with captured real traffic. Place files under <code>fuzz-corpus/&lt;test_name&gt;/</code> and Smith picks them up automatically.</p>
+
+${sh(`# Seed corpus directory layout
+fuzz-corpus/
+  fuzz_parser/
+    empty.txt
+    single_number.txt
+    multiple_numbers.txt
+    leading_whitespace.txt
+    unicode.txt`)}
+
+<h2>Reproducing a finding</h2>
+<p>When Smith reports a crash, it saves the input. Reproduce it under the debugger:</p>
+
+${sh(`# Smith reported a crash here:
+# .zig-cache/fuzz/crashes/2026-05-13-crash-12ab.bin
+
+zig build test -Dtest-filter="fuzz parser" --fuzz-input=.zig-cache/fuzz/crashes/2026-05-13-crash-12ab.bin`)}
+
+<p>This runs the test once with that exact input, producing a deterministic stack trace and (if the bug is a safety violation) a precise diagnostic.</p>
+
+<h2>What fuzzing finds</h2>
+<ul>
+  <li>Crashes on malformed input that should have returned errors.</li>
+  <li>Hangs and pathological worst-case runtime.</li>
+  <li>Out-of-bounds reads/writes the type system missed.</li>
+  <li>Integer overflows in numeric code.</li>
+  <li>Memory leaks (with the testing allocator).</li>
+  <li>Differential bugs (use fuzzing to compare two implementations and watch for divergence).</li>
+</ul>
+
+${tip('Fuzz any code that consumes untrusted input: parsers, decoders, deserializers, network protocols, file format readers. A few hours of CI fuzzing per merge finds bugs that years of manual code review miss.')}

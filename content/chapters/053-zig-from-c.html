@@ -1,0 +1,129 @@
+<p>The inverse direction is equally well-supported. You can write a library in Zig and consume it from any language that speaks C ABI: C itself, C++, Python (ctypes/cffi), Ruby (FFI), Go (cgo), Rust (extern "C"), even another Zig program that uses dynamic linking.</p>
+
+<h2>Exporting a function</h2>
+${z(`// src/lib.zig
+const std = @import("std");
+
+export fn add(a: c_int, b: c_int) c_int {
+    return a + b;
+}
+
+export fn greet(name: [*:0]const u8) void {
+    std.debug.print("hello, {s}\\\\n", .{std.mem.span(name)});
+}`)}
+
+<p>The <code>export</code> keyword does two things: it gives the function C calling convention (<code>callconv(.c)</code>) and marks the symbol for external linkage. The function name becomes the linker symbol verbatim — no name mangling.</p>
+
+<h2>Building a static library</h2>
+${z(`// build.zig
+const lib_mod = b.createModule(.{
+    .root_source_file = b.path("src/lib.zig"),
+    .target = target,
+    .optimize = optimize,
+});
+
+const lib = b.addLibrary(.{
+    .linkage = .static,
+    .name = "mylib",
+    .root_module = lib_mod,
+});
+b.installArtifact(lib);
+
+const header_install = b.addInstallFileWithDir(b.path("include/mylib.h"), .header, "mylib.h");
+b.getInstallStep().dependOn(&header_install.step);`)}
+
+<p>Run <code>zig build</code> and you get <code>zig-out/lib/libmylib.a</code> and <code>zig-out/include/mylib.h</code>. Distribute these to C consumers.</p>
+
+<h2>The companion C header</h2>
+<p>You write the header by hand to match your exported signatures:</p>
+
+${code('c', `// include/mylib.h
+#ifndef MYLIB_H
+#define MYLIB_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int add(int a, int b);
+void greet(const char *name);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif`)}
+
+<p>From a C program:</p>
+
+${code('c', `// main.c
+#include "mylib.h"
+#include <stdio.h>
+
+int main(void) {
+    printf("%d\\\\n", add(2, 3));
+    greet("world");
+    return 0;
+}`)}
+
+<p>Compile it with any C compiler (including <code>zig cc</code>): <code>zig cc main.c -L./zig-out/lib -lmylib -I./zig-out/include -o app</code>.</p>
+
+<h2>Building a shared library</h2>
+${z(`const lib = b.addLibrary(.{
+    .linkage = .dynamic,
+    .name = "mylib",
+    .root_module = lib_mod,
+});`)}
+
+<p>You now get <code>libmylib.so</code> (Linux), <code>libmylib.dylib</code> (macOS), or <code>mylib.dll</code> + <code>mylib.lib</code> (Windows). Shared libraries are how language bindings typically consume Zig code at runtime.</p>
+
+<h2>Callbacks: passing Zig functions to C</h2>
+<p>A common pattern: a C library takes a function pointer. You can hand it a Zig function as long as it has C calling convention.</p>
+
+${z(`const c = @import("c");
+
+fn compare(a: ?*const anyopaque, b: ?*const anyopaque) callconv(.c) c_int {
+    const x: *const c_int = @ptrCast(@alignCast(a.?));
+    const y: *const c_int = @ptrCast(@alignCast(b.?));
+    return x.* - y.*;
+}
+
+pub fn main() void {
+    var values = [_]c_int{ 4, 1, 3, 5, 2 };
+    c.qsort(&values, values.len, @sizeOf(c_int), compare);
+    for (values) |v| std.debug.print("{}\\\\n", .{v});
+}`)}
+
+<p>The <code>callconv(.c)</code> is mandatory because the C library will call into your function using C's calling convention. Without it, the ABI mismatches and you get nonsense values or a crash.</p>
+
+<h2>Opaque types and handle-based APIs</h2>
+<p>Idiomatic C libraries hide their state behind opaque pointers. You expose them the same way from Zig:</p>
+
+${z(`const Foo = opaque {};
+
+export fn foo_new() ?*Foo {
+    const allocator = std.heap.c_allocator;
+    const instance = allocator.create(Internal) catch return null;
+    instance.* = .{ .value = 0 };
+    return @ptrCast(instance);
+}
+
+export fn foo_free(handle: ?*Foo) void {
+    if (handle) |h| {
+        const internal: *Internal = @ptrCast(@alignCast(h));
+        std.heap.c_allocator.destroy(internal);
+    }
+}
+
+const Internal = struct {
+    value: u32,
+};`)}
+
+<p>The C consumer sees <code>typedef struct Foo Foo;</code> in their header. They can hold a <code>Foo*</code> but they can't dereference it. All the actual structure layout lives in Zig.</p>
+
+${tip('When exporting a Zig library, declare a single allocator policy and document it. Many C-facing libraries use <code>std.heap.c_allocator</code> so that <code>malloc</code>/<code>free</code> work seamlessly across the boundary, but for embedded or specialty contexts you might pass an allocator in via a context struct.')}
+
+<h2>WebAssembly exports</h2>
+<p>For <code>wasm32-freestanding</code> targets, <code>export</code> produces a WebAssembly export. JavaScript can then call your function by name. Same code, different ABI. See the WebAssembly chapter for the full workflow.</p>
+
+${warn('Don\\u2019t expose Zig-specific types (slices, optionals, error unions) across the C boundary. The C side has no understanding of them. Reduce to pointers, lengths, and integer error codes at the boundary; reconstruct rich types on the Zig side.')}

@@ -1,0 +1,106 @@
+<p>A union holds one of several possible values, the way a Rust <code>enum</code> with payload or an OCaml variant works. Zig has three flavors: <em>bare</em> unions (unsafe, you track the tag), <em>tagged</em> unions (with a discriminator), and <em>extern</em>/<em>packed</em> unions for layout-controlled cases.</p>
+
+<h2>Bare unions</h2>
+${z(`const Number = union {
+    int: i64,
+    float: f64,
+    text: []const u8,
+};
+
+var n: Number = .{ .int = 42 };
+// You may only read the active field. Reading another is undefined behavior.
+const v = n.int;`)}
+<p>Bare unions are rarely what you want in Zig. They're useful for C interop or low-level tricks, and that's about it.</p>
+
+<h2>Tagged unions</h2>
+<p>This is the form you'll use 99% of the time. Declare <code>union(enum)</code> and Zig synthesizes a tag enum for you:</p>
+${z(`const Value = union(enum) {
+    int: i64,
+    float: f64,
+    text: []const u8,
+    nothing,
+};
+
+const a: Value = .{ .int = 7 };
+const b: Value = .{ .text = "hi" };
+const c: Value = .nothing;`)}
+
+<p>The tag is generated automatically and named like the union itself (you can get it via <code>std.meta.Tag(Value)</code>). Variants with no payload are written as bare tags.</p>
+
+<h2>Switching on a tagged union</h2>
+${z(`fn describe(v: Value) void {
+    switch (v) {
+        .int => |n| std.debug.print("int {}\\n", .{n}),
+        .float => |f| std.debug.print("float {d}\\n", .{f}),
+        .text => |s| std.debug.print("text {s}\\n", .{s}),
+        .nothing => std.debug.print("nothing\\n", .{}),
+    }
+}`)}
+<p>This is exhaustive: leaving out a tag is a compile error. The capture <code>|n|</code> binds the active payload.</p>
+
+<h2>Capture by pointer</h2>
+${z(`fn mutate(v: *Value) void {
+    switch (v.*) {
+        .int => |*n| n.* += 1,        // mutate through pointer
+        .text => |*s| s.* = "changed",
+        else => {},
+    }
+}`)}
+<p>The <code>|*name|</code> form captures by pointer so you can write into the active payload.</p>
+
+<h2>Explicit tag types</h2>
+<p>If you want to control the tag's underlying type or share it with other code, declare it explicitly:</p>
+${z(`const Op = enum(u8) { add = 1, sub = 2, mul = 3 };
+
+const Instr = union(Op) {
+    add: struct { dst: u8, src: u8 },
+    sub: struct { dst: u8, src: u8 },
+    mul: struct { dst: u8, src: u8 },
+};`)}
+<p>This is how you build tightly packed bytecode formats: the tag and payload sit one after the other in a controlled layout.</p>
+
+<h2>Methods on unions</h2>
+${z(`const Shape = union(enum) {
+    circle: f32,            // radius
+    square: f32,            // side
+    rect: struct { w: f32, h: f32 },
+
+    pub fn area(self: Shape) f32 {
+        return switch (self) {
+            .circle => |r| std.math.pi * r * r,
+            .square => |s| s * s,
+            .rect => |r| r.w * r.h,
+        };
+    }
+};`)}
+
+<h2>Building a small AST</h2>
+${z(`const Expr = union(enum) {
+    num: f64,
+    add: struct { left: *Expr, right: *Expr },
+    mul: struct { left: *Expr, right: *Expr },
+
+    pub fn eval(self: Expr) f64 {
+        return switch (self) {
+            .num => |n| n,
+            .add => |a| a.left.eval() + a.right.eval(),
+            .mul => |m| m.left.eval() * m.right.eval(),
+        };
+    }
+};`)}
+<p>This is the canonical use of tagged unions — algebraic data with structural recursion via <code>switch</code>.</p>
+
+<h2>extern and packed unions</h2>
+<p>For C interop or bit-level work, <code>extern union</code> mirrors C's <code>union</code> layout (all members share the same starting offset), and <code>packed union</code> packs without padding.</p>
+${z(`const FloatBits = packed union {
+    f: f32,
+    bits: u32,
+};
+
+const x = FloatBits{ .f = 1.5 };
+std.debug.print("{x}\\n", .{x.bits}); // print float as hex`)}
+
+${note("Packed union rules", "<p style=\"margin:0\"><code>packed union(T)</code> specifies a backing integer, matching <code>packed struct(T)</code>. Equality comparisons work between packed unions of the same type. Unused bits are not allowed, so every bit must be reachable through some field.</p>")}
+
+<h2>Tagged union size</h2>
+<p>A tagged union takes the size of its largest variant plus the tag, with alignment requirements respected. Variants of very different sizes can waste space; if that matters, consider keeping a separate "big" payload behind a pointer.</p>

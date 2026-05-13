@@ -1,0 +1,137 @@
+<p>Zig has only two conditional constructs: <code>if</code> and <code>switch</code>. Both are <em>expressions</em>: they yield a value. Both are exhaustive in the sense the compiler can verify. They handle ordinary booleans, optionals, and error unions in slightly different shapes — but the shapes are consistent and limited.</p>
+
+<h2>if as a statement</h2>
+${z(`const x: i32 = 42;
+if (x > 0) {
+    std.debug.print("positive\\n", .{});
+} else if (x < 0) {
+    std.debug.print("negative\\n", .{});
+} else {
+    std.debug.print("zero\\n", .{});
+}`)}
+<p>The condition must be a <code>bool</code> — no implicit conversion from integers, pointers, or anything else.</p>
+
+<h2>if as an expression</h2>
+${z(`const x: i32 = -5;
+const sign: i8 = if (x > 0) 1 else if (x < 0) -1 else 0;`)}
+<p>The result type is the common type of the branches. If one branch is <code>noreturn</code> (like <code>return</code> or <code>unreachable</code>) it doesn't participate in the type, which is how single-line guards work cleanly:</p>
+${z(`const value: i32 = if (input < 0) return error.Negative else input;`)}
+
+<h2>if with optionals</h2>
+<p>Zig's <code>if</code> doubles as the unwrap form for optional types. The syntax <code>if (opt) |val| { ... }</code> runs the block with <code>val</code> bound when <code>opt</code> is non-null:</p>
+${z(`var maybe: ?u32 = 42;
+if (maybe) |v| {
+    std.debug.print("got {}\\n", .{v});
+} else {
+    std.debug.print("nothing\\n", .{});
+}
+
+// Capture by pointer if you need to mutate:
+if (maybe) |*v| {
+    v.* = 100;
+}`)}
+<p>This replaces the C idiom of "test for non-null, then dereference." The compiler verifies the variable is non-null inside the block.</p>
+
+<h2>if with error unions</h2>
+<p>The same shape works for error unions. The captured value is the success type; the <code>else</code> clause can capture the error:</p>
+${z(`const result: anyerror!u32 = parseInt(input);
+if (result) |n| {
+    std.debug.print("parsed {}\\n", .{n});
+} else |err| {
+    std.debug.print("failed: {s}\\n", .{@errorName(err)});
+}`)}
+<p>This is one way to handle errors locally. The other ways — <code>try</code> and <code>catch</code> — we cover in Part V.</p>
+
+<h2>switch</h2>
+<p>Zig's <code>switch</code> is exhaustive, optionally returns a value, and works on any type with a finite set of values: integers, enums, error sets, tagged unions, and small ranges.</p>
+${z(`const day: u8 = 3;
+const name = switch (day) {
+    0 => "Sunday",
+    1 => "Monday",
+    2 => "Tuesday",
+    3 => "Wednesday",
+    4 => "Thursday",
+    5 => "Friday",
+    6 => "Saturday",
+    else => "?",
+};`)}
+<p>Patterns can be single values, ranges, lists, or <code>else</code>:</p>
+${z(`const x: i32 = 42;
+const category = switch (x) {
+    0 => "zero",
+    1, 2, 3 => "small",
+    4...10 => "medium",
+    11...100 => "large",
+    else => "huge",
+};`)}
+<p>Ranges use <code>a...b</code> (inclusive at both ends). Lists use commas. <code>else</code> catches everything not covered.</p>
+
+<h2>switch on enums</h2>
+<p>Switching on an enum and covering every case lets you drop the <code>else</code>:</p>
+${z(`const Color = enum { red, green, blue };
+
+fn rgb(c: Color) [3]u8 {
+    return switch (c) {
+        .red => .{ 255, 0, 0 },
+        .green => .{ 0, 255, 0 },
+        .blue => .{ 0, 0, 255 },
+    };
+}`)}
+<p>If you add a fourth color later, the compiler will flag every <code>switch</code> that became non-exhaustive. This is one of Zig's most useful safety features.</p>
+
+<h2>Capturing in switch</h2>
+<p>When switching on a tagged union or an optional, you can capture the payload:</p>
+${z(`const Token = union(enum) {
+    int: i64,
+    str: []const u8,
+    sym: u8,
+};
+
+fn describe(t: Token) void {
+    switch (t) {
+        .int => |n| std.debug.print("int {}\\n", .{n}),
+        .str => |s| std.debug.print("str \\"{s}\\"\\n", .{s}),
+        .sym => |c| std.debug.print("sym {c}\\n", .{c}),
+    }
+}`)}
+<p>Capture by pointer with <code>|*payload|</code> if you want to mutate the union in place.</p>
+
+<h2>Labeled switch and continue</h2>
+<p>A relatively new (post-0.12) feature: <code>switch</code> can carry a label and have its branches re-dispatch with <code>continue :label</code>. This is a clean way to write state machines without an outer loop.</p>
+${z(`const State = enum { idle, running, done };
+
+fn run(initial: State) void {
+    sw: switch (initial) {
+        .idle => {
+            std.debug.print("starting\\n", .{});
+            continue :sw .running;
+        },
+        .running => {
+            std.debug.print("running\\n", .{});
+            continue :sw .done;
+        },
+        .done => {
+            std.debug.print("finished\\n", .{});
+            // fall through; switch exits
+        },
+    }
+}`)}
+<p>The dispatch table is reused, and the compiler can generate a tight indirect-jump sequence. We'll return to this pattern in Chapter 37.</p>
+
+<h2>Inline switch</h2>
+<p>Prefix a <code>switch</code> prong with <code>inline</code> to unroll it at compile time when the discriminator is comptime-known:</p>
+${z(`fn sizeOf(comptime T: type) usize {
+    return switch (T) {
+        u8 => 1,
+        u16, i16 => 2,
+        u32, i32, f32 => 4,
+        u64, i64, f64 => 8,
+        else => @sizeOf(T),
+    };
+}`)}
+<p>Use <code>inline else</code> to peel out an inline catchall.</p>
+
+<h2>Compile-time conditional values</h2>
+<p>Because everything is an expression, the typical "ternary" use case is just <code>if</code>:</p>
+${z(`const verbose = false;
+const log_level = if (verbose) 3 else 1;`)}

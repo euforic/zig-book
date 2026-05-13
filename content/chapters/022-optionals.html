@@ -1,0 +1,83 @@
+<p>An optional type, written <code>?T</code>, holds either a value of type <code>T</code> or the special value <code>null</code>. Zig uses optionals everywhere you'd find nullable references in other languages — and the compiler enforces unwrapping before use, so the billion-dollar mistake is a compile error.</p>
+
+<h2>Declaring optionals</h2>
+${z(`var maybe_age: ?u32 = null;
+maybe_age = 42;
+maybe_age = null;
+
+const found: ?[]const u8 = std.mem.indexOfScalar(u8, "abc", 'b');
+// Wait — that returns ?usize. Let's correct:
+const idx: ?usize = std.mem.indexOfScalar(u8, "abc", 'b');`)}
+
+<h2>Unwrapping</h2>
+<p>You can't use an optional value as if it were the wrapped type — you must unwrap. Four ways, each suited to a different situation.</p>
+
+<h3>1. if-capture</h3>
+${z(`if (maybe_age) |age| {
+    std.debug.print("You are {} years old.\\n", .{age});
+} else {
+    std.debug.print("Age unknown.\\n", .{});
+}`)}
+<p>The capture syntax binds the inner value if non-null. Inside the block, <code>age</code> has type <code>u32</code>.</p>
+
+<h3>2. orelse</h3>
+${z(`const age = maybe_age orelse 0;
+const name = lookup(user_id) orelse "anonymous";`)}
+<p><code>orelse</code> supplies a fallback value when the optional is null. The right-hand side has the wrapped type.</p>
+
+<h3>3. orelse with control flow</h3>
+${z(`const file = openMaybe() orelse return error.NoFile;
+const config = readConfig() orelse {
+    std.log.warn("no config; using defaults", .{});
+    break :blk default_config;
+};`)}
+<p>The right side of <code>orelse</code> can be a control-flow expression (<code>return</code>, <code>continue</code>, <code>break</code>, or a labeled block) — it just needs to be type <code>noreturn</code> or the wrapped type.</p>
+
+<h3>4. .? — the unwrap assertion</h3>
+${z(`const age = maybe_age.?; // panics if maybe_age is null`)}
+<p>Equivalent to <code>maybe_age orelse unreachable</code>. Use only when you can prove the value is non-null. In safe builds it panics with a useful message; in <code>ReleaseFast</code> it's UB.</p>
+
+<h2>while on optionals</h2>
+<p>Looping while an optional remains non-null is idiomatic Zig:</p>
+${z(`var iter = list.iterator();
+while (iter.next()) |item| {
+    process(item);
+}`)}
+<p>This loop runs as long as <code>iter.next()</code> returns a non-null value, automatically unwrapping it.</p>
+
+<h2>Optional pointers</h2>
+<p>The type <code>?*T</code> is the type of "a pointer that might be null." For a non-optional pointer (<code>*T</code>), the compiler guarantees non-null at the type level — you cannot assign <code>null</code> to a <code>*T</code>.</p>
+${z(`fn find(haystack: []const u8, needle: u8) ?*const u8 {
+    for (haystack) |*c| {
+        if (c.* == needle) return c;
+    }
+    return null;
+}`)}
+<p>This is a powerful guarantee: any function that takes a <code>*T</code> doesn't have to defensively null-check.</p>
+
+${tip("Niche layout", "<p style=\"margin:0\">An <code>?*T</code> takes the same space as a <code>*T</code> — the all-zero pointer encodes null. Same for slices (<code>?[]T</code>), function pointers, and any type with an obvious sentinel.</p>")}
+
+<h2>Optional chaining</h2>
+<p>Zig has no <code>?.</code> operator. You unwrap deliberately at each step:</p>
+${z(`fn getCity(user: ?User) ?[]const u8 {
+    const u = user orelse return null;
+    const addr = u.address orelse return null;
+    return addr.city;
+}`)}
+<p>Verbose, but every potential null is visible. With a labeled block you can compress it:</p>
+${z(`fn getCity(user: ?User) ?[]const u8 {
+    return blk: {
+        const u = user orelse break :blk null;
+        const addr = u.address orelse break :blk null;
+        break :blk addr.city;
+    };
+}`)}
+
+<h2>Optionals in function returns</h2>
+<p>Use <code>?T</code> when "missing" is a normal outcome that the caller will handle (e.g. "not found"). Use <code>!T</code> when missing is a failure (e.g. "couldn't open file"). The distinction is semantic but matters at call sites:</p>
+${z(`fn lookup(name: []const u8) ?*User { _ = name; return null; } // optional
+
+fn read(file: []const u8) ![]u8 { _ = file; return error.IoFail; } // error union
+
+const user = lookup("alice") orelse return error.UserNotFound;
+const data = try read("config");`)}

@@ -1,0 +1,88 @@
+<p>Small examples teach syntax. Projects teach judgment. This chapter gives you a set of deliberately scoped projects that exercise the parts of Zig you need in real work: command-line arguments, files, allocation, errors, tests, packages, interop, targets, and release builds.</p>
+
+<h2>How to work through a project</h2>
+<ol>
+  <li>Start with <code>zig init</code> and keep the generated build layout.</li>
+  <li>Write one thin vertical slice before designing abstractions.</li>
+  <li>Add tests as soon as a function has parsing, allocation, or error behavior.</li>
+  <li>Expose <code>zig build run</code>, <code>zig build test</code>, and <code>zig build check</code>.</li>
+  <li>Cross-compile once the local build is green.</li>
+</ol>
+
+${warn("No mocks", `<p style="margin:0">For these projects, test real code and real files. Use temporary directories, fixed buffers, and small fixtures. Do not stub the filesystem, allocator, or parser behavior you are trying to learn.</p>`)}
+
+<h2>Project 1: CLI file tool</h2>
+<p>Build a command named <code>zcount</code> that reads a file and reports bytes, lines, and UTF-8 codepoints. This forces you to use args, file I/O, slices, errors, and tests.</p>
+<ul>
+  <li><strong>Core:</strong> <code>zcount path/to/file</code> prints counts.</li>
+  <li><strong>Errors:</strong> missing argument, unreadable file, invalid UTF-8 if codepoint counting is requested.</li>
+  <li><strong>Tests:</strong> count empty input, one-line input, trailing newline, and non-ASCII UTF-8.</li>
+  <li><strong>Stretch:</strong> add <code>--json</code> output using <code>std.json</code>.</li>
+</ul>
+
+${z(`const Counts = struct {
+    bytes: usize,
+    lines: usize,
+};
+
+pub fn countBytesAndLines(input: []const u8) Counts {
+    var lines: usize = 0;
+    for (input) |byte| {
+        if (byte == '\\n') lines += 1;
+    }
+    return .{ .bytes = input.len, .lines = lines };
+}`)}
+
+<h2>Project 2: Config parser</h2>
+<p>Build a small app config loader. Parse JSON for compatibility and ZON for Zig-native configuration. The point is not a fancy app; the point is handling owned memory and typed data correctly.</p>
+<ul>
+  <li><strong>Core:</strong> load <code>name</code>, <code>port</code>, and <code>features</code> into a typed struct.</li>
+  <li><strong>Memory:</strong> decide whether parsed strings are borrowed from input or owned by an arena.</li>
+  <li><strong>Errors:</strong> distinguish invalid syntax from missing required fields.</li>
+  <li><strong>Tests:</strong> parse valid config, reject invalid port, handle missing optional fields.</li>
+</ul>
+
+${z(`const Config = struct {
+    name: []const u8,
+    port: u16 = 8080,
+    features: []const []const u8 = &.{},
+};`)}
+
+<h2>Project 3: Reusable package</h2>
+<p>Extract a useful library from one of the first two projects. Publish it as a local package consumed by a separate example executable.</p>
+<ul>
+  <li><strong>Package:</strong> expose a named module from <code>build.zig</code>.</li>
+  <li><strong>Build options:</strong> add one <code>-D</code> option that changes behavior at compile time.</li>
+  <li><strong>Tests:</strong> make <code>zig build test</code> run library tests.</li>
+  <li><strong>Docs:</strong> add doc comments to the public API and run a docs build step if your project exposes one.</li>
+</ul>
+
+<h2>Project 4: C boundary or WebAssembly boundary</h2>
+<p>Pick one boundary depending on your interests.</p>
+<ul>
+  <li><strong>C path:</strong> call a tiny C function from Zig, then export a Zig function callable from C.</li>
+  <li><strong>WASM path:</strong> compile a freestanding Zig function to <code>wasm32-freestanding</code> and call it from a small host program.</li>
+  <li><strong>Acceptance:</strong> reduce the boundary to integers, pointers, lengths, and explicit error codes. Do not pass Zig slices or error unions over a C ABI.</li>
+</ul>
+
+<h2>Project 5: Release matrix</h2>
+<p>Take any earlier project and make it shippable.</p>
+<ul>
+  <li>Build <code>x86_64-linux-musl</code>, <code>aarch64-linux-musl</code>, <code>aarch64-macos</code>, and <code>x86_64-windows-gnu</code> where your host can support them.</li>
+  <li>Add a <code>dist</code> or <code>release</code> build step that places artifacts in target-named directories.</li>
+  <li>Run the local artifact and at least one cross-compiled artifact under the appropriate runtime or VM if available.</li>
+  <li>Record exact Zig version and target triples in the release notes.</li>
+</ul>
+
+<h2>Completion checklist</h2>
+<p>You are ready to use Zig actively in projects when you can do these without copying a template blindly:</p>
+<ul>
+  <li>Explain who owns every allocated buffer in your program.</li>
+  <li>Read an unfamiliar <code>build.zig</code> and find its public steps.</li>
+  <li>Use <code>std.testing.allocator</code> or an arena deliberately in tests.</li>
+  <li>Turn a compiler error into a smaller repro.</li>
+  <li>Find the relevant stdlib implementation with <code>rg</code>.</li>
+  <li>Cross-compile a release build and know which target assumptions changed.</li>
+</ul>
+
+${tip("Use external drills between projects", `<p style="margin:0">When a project exposes a weak spot, pause and do five focused exercises in Ziglings or Exercism. Then come back to the project. Fluency comes from alternating drills with real integration work.</p>`)}

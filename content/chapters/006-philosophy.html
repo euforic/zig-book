@@ -1,0 +1,80 @@
+<p>Most of Zig's design choices follow from a small set of beliefs. If you internalize them, the rest of the language stops looking like a list of rules and starts looking like the consequence of taking one or two ideas very seriously. This chapter is about those ideas.</p>
+
+<h2>1. No hidden control flow</h2>
+<p>In Zig, control transfers happen only at constructs you can see. The list is short:</p>
+<ul>
+  <li>Function calls</li>
+  <li><code>if</code> / <code>else</code></li>
+  <li><code>switch</code></li>
+  <li><code>while</code> / <code>for</code></li>
+  <li><code>break</code> / <code>continue</code> / <code>return</code></li>
+  <li><code>try</code> / <code>catch</code> (which are <em>visible</em> error propagation)</li>
+  <li><code>defer</code> / <code>errdefer</code> (which run at scope exit you can <em>see</em>)</li>
+</ul>
+<p>That's all. There are no exceptions that unwind invisibly. There are no destructors. There is no operator overloading, so <code>a + b</code> calls no method. There are no implicit conversions; <code>@as</code>, <code>@intCast</code>, <code>@floatCast</code>, <code>@ptrCast</code> are explicit. There are no implicit constructors that run when a value is created. Reading Zig is reading exactly what runs.</p>
+
+${note("Why this matters", "<p style=\"margin:0\">In a debugger, you never wonder why a function you didn't call is on the stack. In a code review, you never miss a subtle conversion that loses precision. In a hot loop, you never discover that a benign-looking line allocated. The cost is verbosity; the reward is total visibility.</p>")}
+
+<h2>2. No hidden allocations</h2>
+<p>The standard library never calls the system allocator on its own. Any function that needs heap memory takes an <code>Allocator</code> as a parameter. You pass in the allocator you want — the general-purpose allocator, an arena, a fixed buffer, a custom pool — and you can swap implementations without changing the function.</p>
+${z(`var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+defer _ = gpa.deinit();
+const allocator = gpa.allocator();
+
+const buf = try allocator.alloc(u8, 1024);
+defer allocator.free(buf);`)}
+<p>Two consequences. First, you always know which line allocates — it's the one that takes an allocator. Second, you can test a function that uses heap memory with a leak-checking allocator and detect every leak at unit-test time.</p>
+
+<h2>3. Errors are values</h2>
+<p>A function that can fail has a return type like <code>!T</code> — short for "either an error or a <code>T</code>". The compiler refuses to let you drop the error case. You either handle it (<code>catch</code>), propagate it (<code>try</code>), or convert it (<code>orelse</code>, <code>error.SomeError</code> in a switch).</p>
+${z(`fn readConfig(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
+    const cwd = std.Io.Dir.cwd();
+    return try cwd.readFileAlloc(io, "config.toml", allocator, .limited(1 << 20));
+}`)}
+<p>Errors have no stack traces in the type, no payload, no inheritance. They're tagged enum values. They cost a register at the ABI level. They cannot be silently ignored. We dedicate Part V to them.</p>
+
+<h2>4. Comptime is the metaprogramming system</h2>
+<p>Most languages have one syntax for runtime code and a different one (templates, macros, decorators) for metaprogramming. Zig has one syntax for both. Functions can run at compile time. <code>type</code> is a first-class value. Generics are functions that take types as parameters and return types.</p>
+${z(`fn Stack(comptime T: type) type {
+    return struct {
+        items: []T,
+        len: usize,
+
+        pub fn push(self: *@This(), v: T) void {
+            self.items[self.len] = v;
+            self.len += 1;
+        }
+    };
+}
+
+const IntStack = Stack(i32);`)}
+<p><code>Stack</code> is a function. Called at compile time, it returns a struct type. The compiler caches the result, so <code>Stack(i32)</code> always refers to the same type. No template language; no separate macro DSL. Part VII covers this in depth.</p>
+
+<h2>5. Manual memory management</h2>
+<p>Zig does not have a garbage collector. It does not have Rust-style ownership and borrowing. It does not pretend to. You allocate memory; you free it. The language gives you tools — <code>defer</code>, error-aware <code>errdefer</code>, the allocator interface — but the bookkeeping is yours.</p>
+<p>This is the most-debated design decision in Zig. The argument for it: most real C and C++ codebases manage memory correctly because they use arenas, pools, and clear ownership conventions, not because they have a borrow checker. Zig makes those conventions easy to express. The argument against: it's the 21st century and we should have automated this.</p>
+<p>Either way, that's the bet Zig is making. We cover the playbook in Part VI.</p>
+
+<h2>6. Small language, big standard library</h2>
+<p>Zig has 22 keywords. The whole language reference fits in one HTML file. There is one composite "container" construct (the <code>struct</code>) that doubles as a namespace, a class, a tuple, and a module. There is one loop for iteration (<code>for</code>) and one for conditions (<code>while</code>). Everything else is functions and types.</p>
+<p>The standard library, meanwhile, is broad: cryptography, compression, file system, networking, HTTP, JSON, formatting, generic containers, threads, atomics, fuzzing, debug-info parsing. It is also unstable — every release reorganizes some piece of it. We will mark this throughout the book.</p>
+
+<h2>7. Robust, optimal, reusable</h2>
+<p>The official tagline is three words: <em>robust</em>, <em>optimal</em>, <em>reusable</em>. Roughly:</p>
+<ul>
+  <li><strong>Robust</strong> — programs behave correctly even when conditions are bad: out of memory, file missing, bit flipped, allocator misbehaving.</li>
+  <li><strong>Optimal</strong> — the language gets out of the way and lets the program do exactly what's needed, no more.</li>
+  <li><strong>Reusable</strong> — the same code works in different situations: embedded, kernel, userspace, WASM, freestanding.</li>
+</ul>
+<p>Allocator parameters help with all three. So does avoiding hidden control flow. So does compile-time emulation of the target architecture, which lets the same code work on platforms with different pointer sizes and endianness.</p>
+
+<h2>What Zig is not</h2>
+<p>This list is shorter, but worth saying out loud:</p>
+<ul>
+  <li>Zig is <strong>not</strong> a safe language. It will not stop you from dereferencing freed memory. It gives you tools to catch the mistake at test time; it does not eliminate it at compile time.</li>
+  <li>Zig is <strong>not</strong> a high-level language. There is no built-in string class with methods; <code>"hi"</code> is a slice of bytes.</li>
+  <li>Zig is <strong>not</strong> an object-oriented language. There are no classes, no inheritance, no virtual dispatch (unless you build it yourself with tagged unions or vtables).</li>
+  <li>Zig is <strong>not</strong> Rust. The languages share the systems-programming niche, but they make different bets. If you need memory safety as a compile-time guarantee, use Rust. If you need a smaller, simpler language and are willing to take responsibility for memory, Zig has something to offer.</li>
+</ul>
+
+<p>With the philosophy on the table, the rest of the book is mostly cause-and-effect. Let's start putting it to use.</p>

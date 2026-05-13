@@ -1,0 +1,40 @@
+<p>Zig is a small systems programming language whose stated ambition is to be a better C. Not a safer Rust, not a leaner Go — a better C: simple, transparent, and entirely under your control. Andrew Kelley began working on it in 2016, and the project has been refining a single idea ever since:</p>
+
+<blockquote>A programming language should reveal what your program is doing, not hide it.</blockquote>
+
+<p>This sounds like a slogan, but Zig takes it literally. There is no hidden control flow. There is no hidden memory allocation. There is no preprocessor and no macro system. There are no constructors, no destructors, no operator overloading, no exception handling, no garbage collector, no runtime that does work behind your back. When something happens in a Zig program, you wrote a line of code that made it happen.</p>
+
+<h2>What Zig gives you instead</h2>
+<p>Stripping all of that out would just leave you with a worse C, so Zig adds carefully chosen features in exchange:</p>
+<ul>
+  <li><strong>Compile-time code execution.</strong> Any Zig function can run at compile time. Generic types are written as regular functions that take and return types. There's no separate template language; metaprogramming <em>is</em> programming.</li>
+  <li><strong>Explicit allocators.</strong> Functions that allocate take an <code>Allocator</code> as a parameter. The standard library never allocates without one. You always know who owns the memory, and you can swap implementations trivially.</li>
+  <li><strong>Errors as values.</strong> A function that can fail returns an error union (<code>!T</code>). The compiler refuses to let you ignore errors, but the syntax for handling them — <code>try</code>, <code>catch</code>, <code>errdefer</code> — stays out of the way.</li>
+  <li><strong>Optionals instead of null pointers.</strong> If a value might be missing, its type is <code>?T</code>. The compiler enforces unwrapping before use. The billion-dollar mistake doesn't compile.</li>
+  <li><strong>Defer for cleanup.</strong> <code>defer</code> runs at scope exit; <code>errdefer</code> runs only on error. Together they replace destructors with something simpler and more honest.</li>
+  <li><strong>A toolchain that includes C.</strong> The <code>zig</code> binary is also a C and C++ compiler with built-in cross-compilation to most targets. Even if you write no Zig, <code>zig cc</code> is a remarkable tool.</li>
+</ul>
+
+<h2>Hello, world</h2>
+<p>The traditional first program. We'll spend the next chapter installing the compiler and the chapter after that explaining every line, but here it is so you know what you're getting into.</p>
+
+${z(`const std = @import("std");
+
+pub fn main() void {
+    std.debug.print("Hello, Zig!\\n", .{});
+}`)}
+
+<p>That's it. No header files. No preprocessor. No semicolon-juggling. The <code>@import</code> is a compile-time function that returns a module; <code>std.debug.print</code> is just a function call; <code>.{}</code> is an anonymous empty tuple of format arguments. Every glyph on the screen exists for a reason you'll understand by the end of Chapter 4.</p>
+
+<h2>Zig is small</h2>
+<p>The complete language reference fits in one HTML page. There are 22 keywords. There is one loop construct that handles both ranges and iterables (<code>for</code>) and one that handles conditions (<code>while</code>). There is no <em>foreach</em>, no <em>do-while</em>, no class declarations, no trait system, no lifetime annotations, no inheritance hierarchy.</p>
+<p>This is the source of Zig's appeal. You can hold the whole language in your head. Once you do, the only thing left is the standard library and the problem you're trying to solve.</p>
+
+<h2>Zig is not finished</h2>
+${warn("Pre-1.0", "<p style=\"margin:0\">Zig's latest tagged release is 0.16.0 as of May 2026, with 1.0 planned but not dated. Real, large programs are written in Zig today — Bun, TigerBeetle, parts of Uber's infrastructure — but the language and especially the standard library still change between releases. This book takes a snapshot of 0.16 and explains why things are the way they are, so when something changes you'll understand the new shape.</p>")}
+
+<h2>What you should know before continuing</h2>
+<p>You need to be comfortable with at least one programming language and understand the difference between a stack and a heap. You don't need to have written C, but you should be willing to think about memory: where it lives, who owns it, and when it goes away. Zig is not a language that lets you avoid those questions.</p>
+<p>You should also have a terminal you're not afraid of. Most of what we do in this book involves running <code>zig build</code> from a shell and reading the compiler's error messages — which, by the way, are some of the best in any modern language.</p>
+
+<p>Onward.</p>

@@ -1,0 +1,29 @@
+<div class="cover">
+  <div class="cover-eyebrow">A complete guide to Zig 0.16</div>
+  <h1 class="cover-title">The <em>Zig</em> Book</h1>
+  <p class="cover-subtitle">A friendly, exhaustive tour of a small language that takes systems programming seriously.</p>
+  <div class="cover-ornament">⚡  ·  ⚡  ·  ⚡</div>
+  <div class="cover-stats">
+    <div class="cover-stat"><div class="cover-stat-num">0.16.0</div><div class="cover-stat-lbl">Zig version</div></div>
+    <div class="cover-stat"><div class="cover-stat-num">12</div><div class="cover-stat-lbl">parts</div></div>
+    <div class="cover-stat"><div class="cover-stat-num">62</div><div class="cover-stat-lbl">chapters</div></div>
+    <div class="cover-stat"><div class="cover-stat-num">∞</div><div class="cover-stat-lbl">comptime</div></div>
+  </div>
+</div>
+
+<h2>What this book is</h2>
+<p>This is a book for people who want to <em>actually learn</em> Zig — not just skim its syntax. It covers the language as it stands at version <strong>0.16.0</strong>, the latest tagged release as of May 2026. That release introduced I/O as an interface, moved much of the operating-system surface under <code>std.Io</code>, and brought the language meaningfully closer to its 1.0 milestone.</p>
+<p>The book is opinionated about two things. First, that Zig rewards careful reading — every keyword does specific work, and the language has remarkably few hidden behaviors, so naming things accurately matters. Second, that you learn a systems language by writing code that touches memory, calls the operating system, and links against C — not by writing toy programs forever. So we get to the metal quickly.</p>
+
+<h2>Who it's for</h2>
+<p>You should be comfortable with at least one programming language. If you've written C or C++, much of Zig will feel familiar but cleaner. If you're coming from Rust, you'll find Zig less ceremonious but more responsible for your own memory. If you're coming from Go, Python, or JavaScript, you'll be doing more bookkeeping but you'll understand exactly what your program is doing — sometimes for the first time.</p>
+
+<h2>How to read it</h2>
+<p>The chapters are ordered so each one only depends on what came before. You can read it cover-to-cover, or jump in at the part that interests you. The right-hand panel shows the in-page table of contents; the left sidebar shows the whole book.</p>
+
+<p>Use the search box at the top (or press <code>Ctrl-K</code> / <code>⌘-K</code>) to find anything. Click the moon/sun icon for a light theme if you're reading in daylight.</p>
+
+<h2>A note on Zig's stability</h2>
+${warn("Pre-1.0", `<p style="margin:0">Zig is still pre-1.0 and the language and standard library change in every release. This book targets <strong>0.16.0</strong>; install that version when following the examples.</p>`)}
+<p>Now — let's begin.</p>
+<div class="cover-ornament">⚡</div>

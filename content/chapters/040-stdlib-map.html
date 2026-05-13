@@ -1,0 +1,116 @@
+<p>The standard library is where Zig turns from a language into a toolchain. It contains the everyday building blocks you expect from a systems language: allocation, formatting, bytes, containers, I/O, filesystem access, processes, networking, crypto, JSON, tests, target metadata, and enough compiler/build integration to make cross-platform work practical.</p>
+
+<p>The fastest way to learn it is to read it. The public surface starts in <code>std.zig</code>; the implementation lives beside it in small files like <code>Io.zig</code>, <code>mem.zig</code>, <code>heap.zig</code>, and directories like <code>crypto/</code>, <code>http/</code>, and <code>json/</code>.</p>
+
+<h2>Official references</h2>
+<ul>
+  <li><a href="https://ziglang.org/documentation/0.16.0/std/" target="_blank" rel="noopener">Zig 0.16.0 standard library docs</a> — searchable generated API docs for the stable target of this book.</li>
+  <li><a href="https://ziglang.org/download/0.16.0/release-notes.html" target="_blank" rel="noopener">Zig 0.16.0 release notes</a> — the stable release notes for this book's target.</li>
+  <li><a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std" target="_blank" rel="noopener">0.16.0 std source on Codeberg</a> — the tagged source tree behind this book.</li>
+  <li><a href="https://ziglang.org/download/index.json" target="_blank" rel="noopener">download/index.json</a> — machine-readable release metadata for checking what is stable today.</li>
+</ul>
+
+${tip("Local docs are better while coding", `<p style="margin:0">Run <code>zig env</code> to find <code>std_dir</code>, then read files directly under that directory. Run <code>zig std</code> when you want the generated docs in a browser.</p>`)}
+
+<h2>Source jump table</h2>
+<p>These links point at the tagged 0.16.0 source tree, so they stay aligned with the examples in this book.</p>
+<ul>
+  <li><strong>Public surface:</strong> <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/std.zig" target="_blank" rel="noopener"><code>std.zig</code></a></li>
+  <li><strong>Core data work:</strong> <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/mem.zig" target="_blank" rel="noopener"><code>mem.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/fmt.zig" target="_blank" rel="noopener"><code>fmt.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/heap.zig" target="_blank" rel="noopener"><code>heap.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/array_list.zig" target="_blank" rel="noopener"><code>array_list.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/hash_map.zig" target="_blank" rel="noopener"><code>hash_map.zig</code></a></li>
+  <li><strong>Runtime and OS:</strong> <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/Io.zig" target="_blank" rel="noopener"><code>Io.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/Io/Dir.zig" target="_blank" rel="noopener"><code>Io/Dir.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/Io/File.zig" target="_blank" rel="noopener"><code>Io/File.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/process.zig" target="_blank" rel="noopener"><code>process.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/Thread.zig" target="_blank" rel="noopener"><code>Thread.zig</code></a></li>
+  <li><strong>Formats and protocols:</strong> <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/json.zig" target="_blank" rel="noopener"><code>json.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/http.zig" target="_blank" rel="noopener"><code>http.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/crypto.zig" target="_blank" rel="noopener"><code>crypto.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/compress.zig" target="_blank" rel="noopener"><code>compress.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/zon.zig" target="_blank" rel="noopener"><code>zon.zig</code></a></li>
+  <li><strong>Build and tooling:</strong> <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/Build.zig" target="_blank" rel="noopener"><code>Build.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/Target.zig" target="_blank" rel="noopener"><code>Target.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/zig.zig" target="_blank" rel="noopener"><code>zig.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/elf.zig" target="_blank" rel="noopener"><code>elf.zig</code></a>, <a href="https://codeberg.org/ziglang/zig/src/tag/0.16.0/lib/std/dwarf.zig" target="_blank" rel="noopener"><code>dwarf.zig</code></a></li>
+</ul>
+
+<h2>How to inspect std locally</h2>
+${sh(`zig version
+zig env
+zig std
+
+# After reading std_dir from zig env:
+STD=/path/to/zig/lib/std
+rg '^pub (const|fn|var)' "$STD/std.zig"
+rg 'pub fn openFile|pub const OpenFileOptions' "$STD/Io/Dir.zig" -n -A 8
+rg 'pub fn append|pub fn deinit' "$STD/array_list.zig" -n -A 4`)}
+
+<p>For version-sensitive APIs, prefer the source over memory. Generated docs are useful for browsing, but the source shows deprecation notes, error sets, options structs, and implementation details in the same place.</p>
+
+<h2>The everyday modules</h2>
+<table>
+  <thead><tr><th>Module</th><th>Use it for</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>std.mem</code></td><td>Slices, byte operations, searching, trimming, tokenizing, copying, alignment.</td><td>Reach for this any time you are manipulating <code>[]T</code> or <code>[]u8</code>.</td></tr>
+    <tr><td><code>std.fmt</code></td><td>Formatting, parsing integers/floats, compile-checked format strings.</td><td>Formatting powers <code>std.debug.print</code>, writers, logs, and error messages.</td></tr>
+    <tr><td><code>std.heap</code></td><td>Allocators: debug, arena, fixed-buffer, page, SMP, C allocator.</td><td>Zig allocation is explicit; if a function allocates, an allocator should be visible.</td></tr>
+    <tr><td><code>std.ArrayList</code>, <code>std.AutoHashMap</code>, <code>std.StringHashMap</code></td><td>Growable arrays and hash maps.</td><td>In 0.16, <code>ArrayList(T)</code> is allocator-at-call-site; hash maps still store allocators unless you use unmanaged forms.</td></tr>
+    <tr><td><code>std.array_hash_map</code></td><td>Order-preserving maps.</td><td>Use when iteration order matters.</td></tr>
+    <tr><td><code>std.sort</code></td><td>Sorting slices.</td><td>Sort algorithms take context and comparison functions instead of hidden callbacks.</td></tr>
+    <tr><td><code>std.testing</code></td><td>Assertions, temporary allocators, test helpers.</td><td>Use <code>std.testing.allocator</code> for leak-checked unit tests.</td></tr>
+  </tbody>
+</table>
+
+<h2>System and runtime modules</h2>
+<table>
+  <thead><tr><th>Module</th><th>Use it for</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>std.Io</code></td><td>Readers, writers, files, directories, networking, sleeping, randomness, task groups, synchronization.</td><td>This is the central 0.16 runtime interface. Most OS-facing examples should accept <code>io: std.Io</code>.</td></tr>
+    <tr><td><code>std.Io.Dir</code> and <code>std.Io.File</code></td><td>Filesystem and file-handle work.</td><td>Directory handles keep path roots explicit.</td></tr>
+    <tr><td><code>std.process</code></td><td>Arguments, environment, child processes, current/executable paths, exit.</td><td>Use <code>std.process.Init</code> for real programs in 0.16.</td></tr>
+    <tr><td><code>std.Thread</code> and <code>std.atomic</code></td><td>Raw threads and atomic operations.</td><td>Waiting primitives that may suspend moved toward <code>std.Io</code>; use raw threads for CPU parallelism.</td></tr>
+    <tr><td><code>std.posix</code>, <code>std.os</code>, <code>std.c</code></td><td>Low-level platform and libc integration.</td><td>Use only when the higher-level cross-platform abstraction is not enough.</td></tr>
+    <tr><td><code>std.log</code> and <code>std.debug</code></td><td>Logging, assertions, stack traces, panic/debug output.</td><td><code>std.debug.print</code> writes to stderr and is for diagnostics, not normal app output.</td></tr>
+  </tbody>
+</table>
+
+<h2>Data formats, networking, and security</h2>
+<table>
+  <thead><tr><th>Module</th><th>Use it for</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>std.json</code></td><td>Parsing, dynamic values, typed parsing, stringifying, scanners.</td><td>Use typed parsing for config and protocols; use scanners for streaming or custom validation.</td></tr>
+    <tr><td><code>std.zon</code></td><td>Zig Object Notation.</td><td>Used by <code>build.zig.zon</code> and good for Zig-native config.</td></tr>
+    <tr><td><code>std.http</code></td><td>HTTP client/server pieces.</td><td>Useful for tools and services; TLS behavior is controlled by std options.</td></tr>
+    <tr><td><code>std.Uri</code></td><td>Parsing and formatting URIs.</td><td>Use before hand-rolling URL splitting.</td></tr>
+    <tr><td><code>std.crypto</code></td><td>Hashes, MACs, AEADs, signatures, key derivation, password hashing, TLS primitives.</td><td>Use curated primitives; do not invent protocols.</td></tr>
+    <tr><td><code>std.hash</code></td><td>Non-cryptographic hashes, CRCs, checksums.</td><td>Use <code>std.crypto</code> when security matters.</td></tr>
+    <tr><td><code>std.compress</code>, <code>std.tar</code>, <code>std.zip</code></td><td>Archives and compression-related formats.</td><td>Check the exact 0.16 capability before promising compression or decompression support.</td></tr>
+    <tr><td><code>std.base64</code>, <code>std.unicode</code>, <code>std.ascii</code></td><td>Encoding, decoding, character classification, Unicode helpers.</td><td>Zig strings are bytes; these modules help when bytes represent text.</td></tr>
+  </tbody>
+</table>
+
+<h2>Compiler, build, and target modules</h2>
+<table>
+  <thead><tr><th>Module</th><th>Use it for</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>std.Build</code></td><td><code>build.zig</code> scripts, steps, modules, options, artifacts.</td><td>The build system is Zig code; most package work starts here.</td></tr>
+    <tr><td><code>std.Target</code></td><td>CPU, OS, ABI, object format, feature metadata.</td><td>Useful for cross-compilation and conditional code.</td></tr>
+    <tr><td><code>std.builtin</code></td><td>Compiler-provided build facts.</td><td>Usually imported through <code>@import("builtin")</code>.</td></tr>
+    <tr><td><code>std.zig</code></td><td>Zig tokenizer/parser/compiler-adjacent utilities.</td><td>Useful for tools that inspect Zig source.</td></tr>
+    <tr><td><code>std.elf</code>, <code>std.macho</code>, <code>std.coff</code>, <code>std.dwarf</code>, <code>std.pdb</code></td><td>Object files, debug info, binary formats.</td><td>These are lower-level modules for tooling, loaders, debuggers, and binary inspection.</td></tr>
+    <tr><td><code>std.SemanticVersion</code></td><td>Parsing and comparing semantic versions.</td><td>Useful in package and toolchain code.</td></tr>
+  </tbody>
+</table>
+
+<h2>Specialized containers and utilities</h2>
+<table>
+  <thead><tr><th>Module or type</th><th>Use it for</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>std.StaticStringMap</code></td><td>Compile-time string-keyed lookup tables.</td><td>Great for keyword tables and parsers.</td></tr>
+    <tr><td><code>std.EnumArray</code>, <code>std.EnumMap</code>, <code>std.EnumSet</code></td><td>Dense enum-indexed collections.</td><td>Prefer these over hash maps when keys are an enum.</td></tr>
+    <tr><td><code>std.StaticBitSet</code>, <code>std.DynamicBitSet</code></td><td>Bit sets.</td><td>Use for flags, sets of small integers, and dense boolean state.</td></tr>
+    <tr><td><code>std.MultiArrayList</code></td><td>Struct-of-arrays storage.</td><td>Useful for cache-friendly collections with many records.</td></tr>
+    <tr><td><code>std.PriorityQueue</code>, <code>std.PriorityDequeue</code></td><td>Heap-based queues.</td><td>Use for schedulers, graph algorithms, and best-first work queues.</td></tr>
+    <tr><td><code>std.Treap</code>, <code>std.Deque</code>, linked lists</td><td>Specialized ordering, queueing, and intrusive structures.</td><td>Reach for these when their data-structure tradeoff is exactly what you need.</td></tr>
+    <tr><td><code>std.Random</code></td><td>Deterministic PRNGs and random interfaces.</td><td>Use <code>io.randomSecure</code> for fresh cryptographic entropy.</td></tr>
+  </tbody>
+</table>
+
+<h2>How to choose</h2>
+<ul>
+  <li>Start with the highest-level module that says what you mean: <code>std.json</code> for JSON, <code>std.Io.Dir</code> for files, <code>std.crypto</code> for security, <code>std.Build</code> for build scripts.</li>
+  <li>Drop to <code>std.posix</code>, <code>std.os</code>, or object-format modules only when you need platform-specific behavior.</li>
+  <li>When a module allocates, look for allocator ownership in the type or method signatures.</li>
+  <li>When an operation can block, sleep, wait, touch the OS, or request entropy, expect a <code>std.Io</code> shape in 0.16.</li>
+  <li>Before copying outside examples, verify them against your installed <code>std_dir</code>.</li>
+</ul>
+
+${note("The rule of thumb", `<p style="margin:0">The standard library is broad enough that you should search it before adding a dependency, but small enough that reading the source is usually faster than searching the web.</p>`)}
