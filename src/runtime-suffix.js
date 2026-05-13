@@ -266,37 +266,45 @@ function initSearch() {
   const results = document.getElementById('searchResults');
   if (!input || !results) return;
 
+  function setResultsOpen(open) {
+    results.classList.toggle('active', open);
+    input.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
   let debounce = null;
   input.addEventListener('input', function(){
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(function(){
       const q = input.value.trim();
       if (q.length < 2) {
-        results.classList.remove('active');
+        setResultsOpen(false);
+        results.classList.remove('is-empty');
         results.innerHTML = '';
         return;
       }
       const hits = search(q);
       if (!hits.length) {
-        results.innerHTML = '<div class="search-result"><div class="search-result-title">No matches</div></div>';
-        results.classList.add('active');
+        results.innerHTML = '<div class="search-empty" role="status"><div class="search-result-title">No matches</div><div>Try a language feature, stdlib name, or chapter title.</div></div>';
+        results.classList.add('is-empty');
+        setResultsOpen(true);
         return;
       }
+      results.classList.remove('is-empty');
       let html = '';
       hits.forEach(function(h){
-        html += '<a class="search-result" href="#' + h.chapter.slug + '">';
+        html += '<a class="search-result" href="#' + h.chapter.slug + '" role="option">';
         html += '<div class="search-result-title">' + h.chapter.title + '</div>';
         if (h.chapter.part) html += '<div class="search-result-part">' + h.chapter.part + '</div>';
         if (h.snippet) html += '<div class="search-result-snippet">' + h.snippet + '</div>';
         html += '</a>';
       });
       results.innerHTML = html;
-      results.classList.add('active');
+      setResultsOpen(true);
 
       // Click closes the dropdown
       results.querySelectorAll('a.search-result').forEach(function(a){
         a.addEventListener('click', function(){
-          results.classList.remove('active');
+          setResultsOpen(false);
           input.value = '';
         });
       });
@@ -305,7 +313,7 @@ function initSearch() {
 
   document.addEventListener('click', function(e){
     if (!e.target.closest('.search-wrap')) {
-      results.classList.remove('active');
+      setResultsOpen(false);
     }
   });
 
@@ -315,7 +323,7 @@ function initSearch() {
       input.focus();
       input.select();
     } else if (e.key === 'Escape') {
-      results.classList.remove('active');
+      setResultsOpen(false);
       input.blur();
     }
   });
